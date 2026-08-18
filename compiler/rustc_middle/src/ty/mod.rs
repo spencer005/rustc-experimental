@@ -42,7 +42,7 @@ use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def::{CtorKind, CtorOf, DefKind, DocLinkResMap, LifetimeRes, Res};
 use rustc_hir::def_id::{CrateNum, DefId, DefIdMap, LocalDefId, LocalDefIdMap};
 use rustc_hir::definitions::PerParentDisambiguatorState;
-use rustc_hir::{self as hir, MissingLifetimeKind, attrs as attr, find_attr};
+use rustc_hir::{self as hir, attrs as attr, find_attr};
 use rustc_index::IndexVec;
 use rustc_index::bit_set::BitMatrix;
 use rustc_macros::{
@@ -220,7 +220,8 @@ pub struct PerOwnerResolverData<'tcx> {
     /// Resolution for import nodes, which have multiple resolutions in different namespaces.
     pub import_res: hir::def::PerNS<Option<Res<ast::NodeId>>> = Default::default(),
     /// Lifetime parameters that lowering will have to introduce.
-    pub extra_lifetime_params_map: NodeMap<Vec<(Ident, ast::NodeId, MissingLifetimeKind)>> = Default::default(),
+    pub extra_lifetime_params_map: NodeMap<Vec<(Ident, ast::NodeId, hir::FreshLifetimeKind)>> =
+        Default::default(),
 
     /// The id of the owner
     pub id: ast::NodeId,
@@ -250,9 +251,10 @@ impl<'tcx> PerOwnerResolverData<'tcx> {
     ///
     /// The extra lifetimes that appear from the parenthesized `Fn`-trait desugaring
     /// should appear at the enclosing `PolyTraitRef`.
-    pub fn extra_lifetime_params(&self, id: NodeId) -> &[(Ident, NodeId, MissingLifetimeKind)] {
+    pub fn extra_lifetime_params(&self, id: NodeId) -> &[(Ident, NodeId, hir::FreshLifetimeKind)] {
         self.extra_lifetime_params_map.get(&id).map_or(&[], |v| &v[..])
     }
+
 }
 
 /// Resolutions that should only be used for lowering.
@@ -1073,6 +1075,77 @@ impl<'tcx> ProvisionalHiddenType<'tcx> {
         }
         DefinitionSiteHiddenType { span: self.span, ty: ty::EarlyBinder::bind(tcx, result_ty) }
     }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash, TyEncodable, TyDecodable)]
+pub struct RegionSlot(DefId);
+
+impl RegionSlot {
+    pub fn from_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Self> {
+        (tcx.def_kind(def_id) == DefKind::LifetimeParam).then_some(Self(def_id))
+    }
+
+    pub fn def_id(self) -> DefId {
+        self.0
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash, TyEncodable, TyDecodable)]
+pub struct OriginSlot(DefId);
+
+impl OriginSlot {
+    pub fn from_param(param: &GenericParamDef) -> Option<Self> {
+        matches!(param.kind, GenericParamDefKind::OriginLifetime).then_some(Self(param.def_id))
+    }
+
+    pub fn def_id(self) -> DefId {
+        self.0
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash, TyEncodable, TyDecodable)]
+pub struct OriginRequirement {
+    source: RegionSlot,
+    target: OriginSlot,
+}
+
+impl OriginRequirement {
+    pub fn new(source: RegionSlot, target: OriginSlot) -> Self {
+        Self { source, target }
+    }
+
+    pub fn source(self) -> RegionSlot {
+        self.source
+    }
+
+    pub fn target(self) -> OriginSlot {
+        self.target
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash)]
+pub struct OriginContract<'tcx> {
+    pub requirements: &'tcx [OriginRequirement],
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash)]
+pub enum OriginContractErrorKind {
+    UnrepresentableValue,
+    CallMayMutateOrigin,
+    DropMayMutateOrigin,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash)]
+pub struct OriginContractError {
+    pub span: Span,
+    pub kind: OriginContractErrorKind,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, StableHash)]
+
+pub enum OriginContractAnalysis<'tcx> {
+    Contract(OriginContract<'tcx>),
+    Unrepresentable(OriginContractError),
 }
 
 #[derive(Copy, Clone, Debug, StableHash, TyEncodable, TyDecodable)]

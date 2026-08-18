@@ -2617,7 +2617,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                     args[i]
                 } else {
                     match param.kind {
-                        GenericParamDefKind::Lifetime => {
+                        GenericParamDefKind::Lifetime | GenericParamDefKind::OriginLifetime => {
                             // In general, during probe we erase regions.
                             self.tcx.lifetimes.re_erased.into()
                         }
@@ -2625,6 +2625,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                             self.var_for_def(self.span, param)
                         }
                     }
+
                 }
             });
             fn_sig.instantiate(self.tcx, args).skip_norm_wip()

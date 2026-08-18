@@ -61,7 +61,8 @@ use rustc_hir::definitions::PerParentDisambiguatorState;
 use rustc_hir::lints::DelayedLint;
 use rustc_hir::{
     self as hir, AngleBrackets, ConstArg, GenericArg, HirId, ItemLocalMap, LifetimeSource,
-    LifetimeSyntax, MissingLifetimeKind, ParamName, Target, TraitCandidate, find_attr,
+    LifetimeSyntax, ParamName, Target, TraitCandidate, find_attr,
+
 };
 use rustc_index::{Idx, IndexVec};
 use rustc_macros::extension;
@@ -1079,7 +1080,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         &mut self,
         ident: Ident,
         node_id: NodeId,
-        kind: MissingLifetimeKind,
+        kind: hir::FreshLifetimeKind,
         source: hir::GenericParamSource,
     ) -> hir::GenericParam<'hir> {
         // Late resolution delegates to us the creation of the `LocalDefId`.
@@ -1099,7 +1100,13 @@ impl<'hir> LoweringContext<'_, 'hir> {
             name: hir::ParamName::Fresh,
             span: self.lower_span(ident.span),
             pure_wrt_drop: false,
-            kind: hir::GenericParamKind::Lifetime { kind: hir::LifetimeParamKind::Elided(kind) },
+            kind: hir::GenericParamKind::Lifetime {
+                kind: match kind {
+                    hir::FreshLifetimeKind::Elided(kind) => hir::LifetimeParamKind::Elided(kind),
+                    hir::FreshLifetimeKind::Origin => hir::LifetimeParamKind::Origin,
+                },
+            },
+
             colon_span: None,
             source,
         }

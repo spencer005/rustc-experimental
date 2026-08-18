@@ -544,7 +544,9 @@ impl<'hir> LoweringContext<'_, 'hir> {
             let GenericArgSlot::Generate(p, _) = p else { return None };
 
             let def_kind = match p.kind {
-                GenericParamDefKind::Lifetime => DefKind::LifetimeParam,
+                GenericParamDefKind::Lifetime | GenericParamDefKind::OriginLifetime => {
+                    DefKind::LifetimeParam
+                }
                 GenericParamDefKind::Type { .. } => DefKind::TyParam,
                 GenericParamDefKind::Const { .. } => DefKind::ConstParam,
             };
@@ -571,6 +573,9 @@ impl<'hir> LoweringContext<'_, 'hir> {
             let kind = match p.kind {
                 GenericParamDefKind::Lifetime => {
                     hir::GenericParamKind::Lifetime { kind: hir::LifetimeParamKind::Explicit }
+                }
+                GenericParamDefKind::OriginLifetime => {
+                    hir::GenericParamKind::Lifetime { kind: hir::LifetimeParamKind::Origin }
                 }
                 GenericParamDefKind::Type { synthetic, .. } => {
                     hir::GenericParamKind::Type { default: None, synthetic }

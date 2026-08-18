@@ -807,6 +807,13 @@ pub enum MissingLifetimeKind {
     Brackets,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, StableHash, Debug)]
+pub enum FreshLifetimeKind {
+    Elided(MissingLifetimeKind),
+    Origin,
+}
+
+
 #[derive(Copy, Clone, Debug, StableHash)]
 pub enum LifetimeParamKind {
     // Indicates that the lifetime definition was explicitly declared (e.g., in
@@ -816,6 +823,8 @@ pub enum LifetimeParamKind {
     // Indication that the lifetime was elided (e.g., in both cases in
     // `fn foo(x: &u8) -> &'_ u8 { x }`).
     Elided(MissingLifetimeKind),
+    Origin,
+
 
     // Indication that the lifetime name was somehow in error.
     Error,

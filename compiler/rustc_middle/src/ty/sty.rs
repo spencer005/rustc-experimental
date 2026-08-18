@@ -873,7 +873,8 @@ impl<'tcx> Ty<'tcx> {
         let args =
             ty::GenericArgs::for_item(tcx, tcx.typeck_root_def_id(def_id), |def, _| {
                 match def.kind {
-                    ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+                    ty::GenericParamDefKind::Lifetime
+                    | ty::GenericParamDefKind::OriginLifetime => tcx.lifetimes.re_erased.into(),
                     ty::GenericParamDefKind::Type { .. }
                     | ty::GenericParamDefKind::Const { .. } => coroutine_args[def.index as usize],
                 }
@@ -893,7 +894,10 @@ impl<'tcx> Ty<'tcx> {
     fn new_generic_adt(tcx: TyCtxt<'tcx>, wrapper_def_id: DefId, ty_param: Ty<'tcx>) -> Ty<'tcx> {
         let adt_def = tcx.adt_def(wrapper_def_id);
         let args = GenericArgs::for_item(tcx, wrapper_def_id, |param, args| match param.kind {
-            GenericParamDefKind::Lifetime | GenericParamDefKind::Const { .. } => bug!(),
+            GenericParamDefKind::Lifetime
+            | GenericParamDefKind::OriginLifetime
+            | GenericParamDefKind::Const { .. } => bug!(),
+
             GenericParamDefKind::Type { has_default, .. } => {
                 if param.index == 0 {
                     ty_param.into()

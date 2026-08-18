@@ -1706,7 +1706,8 @@ impl<'tcx> Resolver<'_, 'tcx> {
         if let Some(def_id) = def_id.as_local() {
             self.item_generics_num_lifetimes[&def_id]
         } else {
-            self.tcx.generics_of(def_id).own_counts().lifetimes
+            let generics = self.tcx.generics_of(def_id);
+            generics.own_counts().lifetimes - generics.own_origin_lifetime_count()
         }
     }
 
@@ -1721,6 +1722,7 @@ impl<'tcx> Resolver<'_, 'tcx> {
                 .iter()
                 .filter_map(|param| match param.kind {
                     ty::GenericParamDefKind::Lifetime => Some("'_"),
+                    ty::GenericParamDefKind::OriginLifetime => None,
                     ty::GenericParamDefKind::Type { has_default, .. }
                     | ty::GenericParamDefKind::Const { has_default } => {
                         if has_default {

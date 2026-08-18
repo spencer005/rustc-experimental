@@ -126,7 +126,7 @@ pub(crate) fn enforce_impl_lifetime_params_are_constrained(
     let mut res = Ok(());
     for param in &impl_generics.own_params {
         match param.kind {
-            ty::GenericParamDefKind::Lifetime => {
+            ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
                 // This is a horrible concession to reality. I think it'd be
                 // better to just ban unconstrained lifetimes outright, but in
                 // practice people do non-hygienic macros like:
@@ -229,10 +229,11 @@ pub(crate) fn enforce_impl_non_lifetime_params_are_constrained(
                 let param_ct = ty::ParamConst::for_def(param);
                 !input_parameters.contains(&cgp::Parameter::from(param_ct))
             }
-            ty::GenericParamDefKind::Lifetime => {
+            ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
                 // Enforced in `enforce_impl_type_params_are_constrained`.
                 false
             }
+
         };
         if err {
             let const_param_note = matches!(param.kind, ty::GenericParamDefKind::Const { .. });

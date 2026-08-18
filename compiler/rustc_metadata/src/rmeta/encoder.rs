@@ -1491,6 +1491,13 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                         record!(self.tables.const_param_default[param.def_id] <- default);
                     }
                 }
+                if g.own_origin_lifetime_count() != 0 {
+                    let ty::OriginContractAnalysis::Contract(contract) = *tcx.origin_contract(def_id)
+                    else {
+                        bug!("cannot encode an unrepresentable origin contract for {def_id:?}");
+                    };
+                    record_array!(self.tables.origin_contract[def_id] <- contract.requirements);
+                }
             }
             if tcx.is_conditionally_const(def_id) {
                 record!(self.tables.const_conditions[def_id] <- self.tcx.const_conditions(def_id));

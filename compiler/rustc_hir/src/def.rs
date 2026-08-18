@@ -949,8 +949,9 @@ pub enum LifetimeRes {
         ///
         /// Creating the associated `LocalDefId` is the responsibility of lowering.
         param: NodeId,
-        /// Kind of elided lifetime
-        kind: hir::MissingLifetimeKind,
+        /// Semantic role of this compiler-generated lifetime.
+        kind: hir::FreshLifetimeKind,
+
     },
     /// This variant is used for anonymous lifetimes that we did not resolve during
     /// late resolution. Those lifetimes will be inferred by typechecking.

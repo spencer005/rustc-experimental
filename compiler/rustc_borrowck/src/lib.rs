@@ -82,6 +82,7 @@ mod def_use;
 mod diagnostics;
 mod handle_placeholders;
 mod nll;
+mod origin_contract;
 mod path_utils;
 mod place_ext;
 mod places_conflict;
@@ -106,7 +107,7 @@ impl<'tcx> TyCtxtConsts<'tcx> {
 }
 
 pub fn provide(providers: &mut Providers) {
-    *providers = Providers { mir_borrowck, ..*providers };
+    *providers = Providers { mir_borrowck, origin_contract: origin_contract::infer, ..*providers };
 }
 
 /// Provider for `query mir_borrowck`. Unlike `typeck`, this must

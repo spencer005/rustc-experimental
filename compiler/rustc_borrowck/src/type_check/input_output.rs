@@ -11,9 +11,11 @@ use std::assert_matches;
 
 use itertools::Itertools;
 use rustc_hir as hir;
-use rustc_infer::infer::{BoundRegionConversionTime, RegionVariableOrigin};
+use rustc_infer::infer::{
+    BoundRegionConversionTime, NllRegionVariableOrigin, RegionVariableOrigin,
+};
 use rustc_middle::mir::*;
-use rustc_middle::ty::{self, Ty};
+use rustc_middle::ty::{self, Ty, fold_regions};
 use rustc_span::Span;
 use tracing::{debug, instrument};
 
@@ -208,9 +210,46 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
             );
         }
 
-        // Equate expected output ty with the type of the RETURN_PLACE in MIR
+        // Equate expected output ty with the type of the RETURN_PLACE in MIR.
         let mir_output_ty = self.body.return_ty();
         let output_span = self.body.local_decls[RETURN_PLACE].source_info.span;
+        let mut normalized_output_ty = normalized_output_ty;
+        if self.tcx().sess.opts.unstable_opts.origin_lifetimes
+            && let DefiningTy::FnDef(def_id, _) =
+                self.universal_region_relations.universal_regions.defining_ty
+        {
+            let tcx = self.tcx();
+            let generics = tcx.generics_of(def_id);
+            let mut replacements = Vec::new();
+            for (region, vid) in self
+                .universal_region_relations
+                .universal_regions
+                .named_universal_regions_iter()
+            {
+                let ty::ReEarlyParam(param) = region.kind() else { continue };
+                if matches!(
+                    generics.region_param(param, tcx).kind,
+                    ty::GenericParamDefKind::OriginLifetime
+                ) {
+                    let replacement = self.infcx.next_nll_region_var(
+                        NllRegionVariableOrigin::Existential { name: None },
+                        || RegionCtxt::Existential(None),
+                    );
+                    replacements.push((vid, replacement));
+                }
+            }
+            if !replacements.is_empty() {
+                normalized_output_ty = fold_regions(tcx, normalized_output_ty, |region, _| {
+                    let ty::ReVar(vid) = region.kind() else { return region };
+                    replacements
+                        .iter()
+                        .find_map(|&(origin_vid, replacement)| {
+                            (origin_vid == vid).then_some(replacement)
+                        })
+                        .unwrap_or(region)
+                });
+            }
+        }
         self.equate_normalized_input_or_output(normalized_output_ty, mir_output_ty, output_span);
     }
 

@@ -1423,7 +1423,7 @@ fn suggest_precise_capturing<'tcx>(
                 }
 
                 match param.kind {
-                    ty::GenericParamDefKind::Lifetime => {
+                    ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
                         captured_lifetimes.insert(param.name);
                     }
                     ty::GenericParamDefKind::Type { synthetic: true, .. } => {
@@ -1434,6 +1434,7 @@ fn suggest_precise_capturing<'tcx>(
                         captured_non_lifetimes.insert(param.name);
                     }
                 }
+
             }
 
             if let Some(parent) = generics.parent {

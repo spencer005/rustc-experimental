@@ -9,6 +9,8 @@ use rustc_infer::traits::query::type_op::Normalize;
 use rustc_middle::mir::ConstraintCategory;
 use rustc_middle::traits::query::OutlivesBound;
 use rustc_middle::ty::{self, RegionVid, Ty, TypeVisitableExt};
+use rustc_middle::bug;
+
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::traits::query::type_op;
 use tracing::{debug, instrument};
@@ -178,6 +180,43 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
         self.inverse_outlives.add(fr_b, fr_a);
     }
 
+    fn universal_region_for_param(&self, def_id: rustc_hir::def_id::DefId) -> RegionVid {
+        let tcx = self.infcx.tcx;
+        let owner = self.universal_regions.defining_ty.def_id();
+        self.universal_regions
+            .named_universal_regions_iter()
+            .find_map(|(region, vid)| {
+                let region_def_id = match region.kind() {
+                    ty::ReEarlyParam(param) => {
+                        Some(tcx.generics_of(owner).region_param(param, tcx).def_id)
+                    }
+                    ty::ReLateParam(param) => param.kind.get_id(),
+                    _ => None,
+                };
+                (region_def_id == Some(def_id)).then_some(vid)
+            })
+            .unwrap_or_else(|| bug!("origin contract region `{def_id:?}` is not universal in `{owner:?}`"))
+    }
+
+    fn add_origin_contract(&mut self) {
+        if !self.infcx.tcx.sess.opts.unstable_opts.origin_lifetimes
+            || !self.universal_regions.defining_ty.is_fn_def()
+        {
+            return;
+        }
+        let Some(def_id) = self.universal_regions.defining_ty.def_id().as_local() else { return };
+        let ty::OriginContractAnalysis::Contract(contract) = *self.infcx.tcx.origin_contract(def_id.to_def_id())
+        else {
+            return;
+        };
+        for requirement in contract.requirements {
+            let source = self.universal_region_for_param(requirement.source().def_id());
+            let target = self.universal_region_for_param(requirement.target().def_id());
+            self.relate_universal_regions(source, target);
+        }
+    }
+
+
     #[instrument(level = "debug", skip(self))]
     pub(crate) fn create(mut self) -> CreateResult<'tcx> {
         let tcx = self.infcx.tcx;
@@ -201,6 +240,7 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
             self.relate_universal_regions(fr_static, fr);
             self.relate_universal_regions(fr, fr_fn_body);
         }
+        self.add_origin_contract();
 
         // Normalize the assumptions we use to borrowck the program.
         let mut constraints = vec![];

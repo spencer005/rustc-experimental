@@ -695,7 +695,9 @@ impl<'tcx> Stable<'tcx> for rustc_middle::ty::GenericParamDefKind {
     fn stable(&self, _: &mut Tables<'_, BridgeTys>, _: &CompilerCtxt<'_, BridgeTys>) -> Self::T {
         use crate::ty::GenericParamDefKind;
         match *self {
-            ty::GenericParamDefKind::Lifetime => GenericParamDefKind::Lifetime,
+            ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
+                GenericParamDefKind::Lifetime
+            }
             ty::GenericParamDefKind::Type { has_default, synthetic } => {
                 GenericParamDefKind::Type { has_default, synthetic }
             }

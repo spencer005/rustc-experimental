@@ -249,10 +249,19 @@ pub fn lower_generic_args<'tcx: 'a, 'a>(
             // provided, matching them with the generic parameters we expect.
             // Mismatches can occur as a result of elided lifetimes, or for malformed
             // input. We try to handle both sensibly.
+            if let Some(&param) = params.peek()
+                && matches!(param.kind, GenericParamDefKind::OriginLifetime)
+            {
+                args.push(ctx.inferred_kind(&args, param, true));
+                params.next();
+                continue;
+            }
+
             match (args_iter.peek(), params.peek()) {
                 (Some(&arg), Some(&param)) => {
                     match (arg, &param.kind, arg_count.explicit_late_bound) {
                         (GenericArg::Lifetime(_), GenericParamDefKind::Lifetime, _)
+                        | (GenericArg::Lifetime(_), GenericParamDefKind::OriginLifetime, _)
                         | (
                             GenericArg::Type(_) | GenericArg::Infer(_),
                             GenericParamDefKind::Type { .. },
@@ -271,7 +280,7 @@ pub fn lower_generic_args<'tcx: 'a, 'a>(
                         }
                         (
                             GenericArg::Infer(_) | GenericArg::Type(_) | GenericArg::Const(_),
-                            GenericParamDefKind::Lifetime,
+                            GenericParamDefKind::Lifetime | GenericParamDefKind::OriginLifetime,
                             _,
                         ) => {
                             // We expected a lifetime argument, but got a type or const
@@ -411,6 +420,8 @@ pub(crate) fn check_generic_arg_count(
     let gen_args = seg.args();
     let default_counts = gen_params.own_defaults();
     let param_counts = gen_params.own_counts();
+    let origin_lifetime_count = gen_params.own_origin_lifetime_count();
+    let user_lifetime_count = param_counts.lifetimes - origin_lifetime_count;
 
     // Subtracting from param count to ensure type params synthesized from `impl Trait`
     // cannot be explicitly specified.
@@ -476,8 +487,8 @@ pub(crate) fn check_generic_arg_count(
         Err(reported)
     };
 
-    let min_expected_lifetime_args = if infer_lifetimes { 0 } else { param_counts.lifetimes };
-    let max_expected_lifetime_args = param_counts.lifetimes;
+    let min_expected_lifetime_args = if infer_lifetimes { 0 } else { user_lifetime_count };
+    let max_expected_lifetime_args = user_lifetime_count;
     let num_provided_lifetime_args = gen_args.num_lifetime_args();
 
     let lifetimes_correct = check_lifetime_args(
@@ -610,7 +621,7 @@ pub(crate) fn check_generic_arg_count(
             named_const_param_count + named_type_param_count,
             named_const_param_count + named_type_param_count + synth_type_param_count,
             provided,
-            param_counts.lifetimes + has_self as usize,
+            user_lifetime_count + has_self as usize,
             gen_args.num_lifetime_args(),
         )
     };

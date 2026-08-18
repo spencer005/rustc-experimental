@@ -168,7 +168,7 @@ fn variance_of_opaque(
 
             for param in &generics.own_params {
                 match param.kind {
-                    ty::GenericParamDefKind::Lifetime => {
+                    ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
                         variances[param.index as usize] = ty::Bivariant;
                     }
                     ty::GenericParamDefKind::Type { .. }

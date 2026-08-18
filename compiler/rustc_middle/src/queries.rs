@@ -1245,6 +1245,12 @@ rustc_queries! {
         desc { "borrow-checking `{}`", tcx.def_path_str(key) }
     }
 
+    query origin_contract(key: DefId) -> &'tcx ty::OriginContractAnalysis<'tcx> {
+        desc { "inferring omitted lifetime origins for `{}`", tcx.def_path_str(key) }
+        separate_provide_extern
+    }
+
+
     /// Gets a complete map from all types to their inherent impls.
     ///
     /// <div class="warning">

@@ -27,7 +27,7 @@ use rustc_errors::{
 use rustc_hir::def::Namespace::{self, *};
 use rustc_hir::def::{CtorKind, DefKind, LifetimeRes, NonMacroAttrKind, PartialRes, PerNS};
 use rustc_hir::def_id::{CRATE_DEF_ID, DefId, LOCAL_CRATE, LocalDefId};
-use rustc_hir::{MissingLifetimeKind, PrimTy};
+use rustc_hir::{FreshLifetimeKind, MissingLifetimeKind, PrimTy};
 use rustc_middle::middle::resolve_bound_vars::Set1;
 use rustc_middle::ty::{AssocTag, DelegationInfo, Visibility};
 use rustc_middle::{bug, span_bug};
@@ -331,6 +331,10 @@ enum LifetimeRibKind {
     /// async fn foo(Foo { x: _ }: Foo<'_>) {}
     /// ```
     AnonymousCreateParameter { binder: NodeId, report_in_path: bool },
+    /// Create a declaration-owned compiler lifetime for an omitted output whose lower bound is
+    /// inferred from a Rust body.
+    OriginCreateParameter { binder: NodeId },
+
 
     /// Replace all anonymous lifetimes by provided lifetime.
     Elided {
@@ -1013,6 +1017,8 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
                             fn_ptr.decl.inputs.iter().map(|Param { ty, .. }| (None, &**ty)),
                             &fn_ptr.decl.output,
                             false,
+                            false,
+
                         )
                     },
                 )
@@ -1135,6 +1141,8 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
                     sig.decl.inputs.iter().map(|Param { ty, .. }| (None, &**ty)),
                     &sig.decl.output,
                     false,
+                    false,
+
                 );
                 return;
             }
@@ -1173,6 +1181,7 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
                                 .map(|Param { pat, ty, .. }| (Some(&**pat), &**ty)),
                             &declaration.output,
                             coro_node_id.is_some(),
+                            matches!(fn_kind, FnKind::Fn(FnCtxt::Free, ..)),
                         );
 
                         if let Some(contract) = contract {
@@ -1394,6 +1403,8 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
                                 p_args.inputs.iter().map(|ty| (None, &**ty)),
                                 &p_args.output,
                                 false,
+                                false,
+
                             );
                             break;
                         }
@@ -1404,6 +1415,8 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
                             break;
                         }
                         LifetimeRibKind::AnonymousCreateParameter { .. }
+                        | LifetimeRibKind::OriginCreateParameter { .. }
+
                         | LifetimeRibKind::AnonymousReportError
                         | LifetimeRibKind::ImplTrait
                         | LifetimeRibKind::Elided { .. }
@@ -1799,6 +1812,10 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                                 .find_map(|rib| match rib.kind {
                                     // Do not suggest eliding a lifetime where an anonymous
                                     // lifetime would be illegal.
+                                    LifetimeRibKind::OriginCreateParameter { .. } => {
+                                        Some(LifetimeUseSet::Many)
+                                    }
+
                                     LifetimeRibKind::Item
                                     | LifetimeRibKind::AnonymousReportError
                                     | LifetimeRibKind::ElisionFailure => Some(LifetimeUseSet::Many),
@@ -1861,6 +1878,8 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                     return;
                 }
                 LifetimeRibKind::AnonymousCreateParameter { .. }
+                | LifetimeRibKind::OriginCreateParameter { .. }
+
                 | LifetimeRibKind::Elided { .. }
                 | LifetimeRibKind::Generics { .. }
                 | LifetimeRibKind::ElisionFailure
@@ -1904,6 +1923,12 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                     self.record_lifetime_use(lifetime.id, res, elision_candidate);
                     return;
                 }
+                LifetimeRibKind::OriginCreateParameter { binder } => {
+                    let res = self.create_origin_lifetime(lifetime.ident, binder);
+                    self.record_lifetime_use(lifetime.id, res, LifetimeElisionCandidate::Ignore);
+                    return;
+                }
+
                 LifetimeRibKind::AnonymousReportError => {
                     let guar = if elided {
                         let suggestion = if self.diag_metadata.in_assoc_ty_binding {
@@ -2153,6 +2178,19 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         binder: NodeId,
         kind: MissingLifetimeKind,
     ) -> LifetimeRes {
+        self.create_synthetic_lifetime(ident, binder, FreshLifetimeKind::Elided(kind))
+    }
+
+    fn create_origin_lifetime(&mut self, ident: Ident, binder: NodeId) -> LifetimeRes {
+        self.create_synthetic_lifetime(ident, binder, FreshLifetimeKind::Origin)
+    }
+
+    fn create_synthetic_lifetime(
+        &mut self,
+        ident: Ident,
+        binder: NodeId,
+        kind: FreshLifetimeKind,
+    ) -> LifetimeRes {
         debug_assert_eq!(ident.name, kw::UnderscoreLifetime);
         debug!(?ident.span);
 
@@ -2170,6 +2208,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
             .push((ident, param, kind));
         res
     }
+
 
     #[instrument(level = "debug", skip(self))]
     fn resolve_elided_lifetimes_in_path(
@@ -2327,6 +2366,13 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                         }
                         break;
                     }
+                    LifetimeRibKind::OriginCreateParameter { binder } => {
+                        for id in node_ids {
+                            let res = self.create_origin_lifetime(ident, binder);
+                            self.record_lifetime_use(id, res, LifetimeElisionCandidate::Ignore);
+                        }
+                        break;
+                    }
                     LifetimeRibKind::Elided { res, error_in_path: false } => {
                         let mut candidate = LifetimeElisionCandidate::Missing(missing_lifetime);
                         for id in node_ids {
@@ -2439,13 +2485,29 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         inputs: impl Iterator<Item = (Option<&'ast Pat>, &'ast Ty)> + Clone,
         output_ty: &'ast FnRetTy,
         report_elided_lifetimes_in_path: bool,
+        infer_output_origin: bool,
     ) {
         let rib = LifetimeRibKind::AnonymousCreateParameter {
             binder: fn_id,
             report_in_path: report_elided_lifetimes_in_path,
         };
         self.with_lifetime_rib(rib, |this| {
-            // Add each argument to the rib.
+            if infer_output_origin && this.r.tcx.sess.opts.unstable_opts.origin_lifetimes {
+                this.resolve_fn_param_patterns(inputs.clone());
+                for (_, ty) in inputs {
+                    this.visit_ty(ty);
+                }
+
+                if fn_id == this.r.current_owner.id {
+                    this.r.current_owner.lifetime_elision_allowed = true;
+                }
+                this.with_lifetime_rib(
+                    LifetimeRibKind::OriginCreateParameter { binder: fn_id },
+                    |this| visit::walk_fn_ret_ty(this, output_ty),
+                );
+                return;
+            }
+
             let elision_lifetime = this.resolve_fn_params(has_self, inputs);
             debug!(?elision_lifetime);
 
@@ -2480,6 +2542,22 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                 }
             }
         });
+    }
+
+    fn resolve_fn_param_patterns(
+        &mut self,
+        inputs: impl Iterator<Item = (Option<&'ast Pat>, &'ast Ty)>,
+    ) {
+        let mut bindings = smallvec![(PatBoundCtx::Product, Default::default())];
+        for (pat, _) in inputs {
+            debug!("resolving bindings in pat = {pat:?}");
+            self.with_lifetime_rib(LifetimeRibKind::elided(LifetimeRes::Infer), |this| {
+                if let Some(pat) = pat {
+                    this.resolve_pattern(pat, PatternSource::FnParam, &mut bindings);
+                }
+            });
+        }
+        self.apply_pattern_bindings(bindings);
     }
 
     /// Resolve inside function parameters and parameter types.

@@ -785,7 +785,10 @@ fn lint_item_shadowing_supertrait_item<'tcx>(tcx: TyCtxt<'tcx>, trait_item_def_i
 fn check_param_wf(tcx: TyCtxt<'_>, param: &ty::GenericParamDef) -> Result<(), ErrorGuaranteed> {
     match param.kind {
         // We currently only check wf of const params here.
-        ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::Type { .. } => Ok(()),
+        ty::GenericParamDefKind::Lifetime
+        | ty::GenericParamDefKind::OriginLifetime
+        | ty::GenericParamDefKind::Type { .. } => Ok(()),
+
 
         // Const parameters are well formed if their type is structural match.
         ty::GenericParamDefKind::Const { .. } => {

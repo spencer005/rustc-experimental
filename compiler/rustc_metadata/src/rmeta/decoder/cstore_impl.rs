@@ -240,6 +240,20 @@ provide! { tcx, def_id, other, cdata,
     type_alias_is_checked => { table_direct }
     variances_of => { table }
     fn_sig => { table }
+    origin_contract => {
+        let lazy = cdata
+            .root
+            .tables
+            .origin_contract
+            .get(cdata, def_id.index)
+            .unwrap_or_else(|| panic!("{def_id:?} does not have an origin contract"));
+        let requirements = if lazy.is_default() {
+            &[]
+        } else {
+            &*tcx.arena.alloc_from_iter(lazy.decode((cdata, tcx)))
+        };
+        tcx.arena.alloc(ty::OriginContractAnalysis::Contract(ty::OriginContract { requirements }))
+    }
     codegen_fn_attrs => { table }
     impl_trait_header => { table }
     impl_is_fully_generic_for_reflection => { table_direct }

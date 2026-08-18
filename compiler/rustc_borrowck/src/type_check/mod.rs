@@ -114,6 +114,26 @@ pub(crate) fn type_check<'tcx>(
         type_tests: Vec::default(),
         universe_causes: FxIndexMap::default(),
     };
+    if infcx.tcx.sess.opts.unstable_opts.origin_lifetimes {
+        let def_id = body.source.def_id().expect_local();
+        if infcx.tcx.generics_of(def_id).own_origin_lifetime_count() != 0
+            && let ty::OriginContractAnalysis::Unrepresentable(error) = *infcx.tcx.origin_contract(def_id.to_def_id())
+        {
+            let message = match error.kind {
+                ty::OriginContractErrorKind::UnrepresentableValue => {
+                    "cannot infer the omitted output lifetime because the returned value may contain a lifetime that is not represented by a function lifetime parameter; write an explicit output lifetime that describes the returned value"
+                }
+                ty::OriginContractErrorKind::CallMayMutateOrigin => {
+                    "cannot infer the omitted output lifetime across this call because the call may mutate reference-bearing state; write explicit lifetimes for this function"
+                }
+                ty::OriginContractErrorKind::DropMayMutateOrigin => {
+                    "cannot infer the omitted output lifetime across this destructor because dropping the value may mutate reference-bearing state; write explicit lifetimes for this function"
+                }
+            };
+            root_cx.dcx().span_err(error.span, message);
+        }
+    }
+
 
     let CreateResult {
         universal_region_relations,
@@ -846,6 +866,50 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                         term_location.to_locations(),
                         ConstraintCategory::Boring,
                     );
+                }
+                if self.infcx.tcx.sess.opts.unstable_opts.origin_lifetimes
+                    && let ty::FnDef(def_id, fn_args) = *func_ty.kind()
+                    && tcx.generics_of(def_id).own_origin_lifetime_count() != 0
+                    && let ty::OriginContractAnalysis::Contract(contract) = *tcx.origin_contract(def_id)
+                {
+                    let fn_args = fn_args
+                        .no_bound_vars()
+                        .unwrap_or_else(|| bug!("function item arguments unexpectedly contain bound variables"));
+                    let generics = tcx.generics_of(def_id);
+                    let region_for_param = |param_def_id| {
+                        if let Some(index) = generics.param_def_id_to_index(tcx, param_def_id) {
+                            return Some(fn_args[index as usize].expect_region());
+                        }
+                        map.iter().find_map(|(bound, &region)| {
+                            matches!(bound.kind, ty::BoundRegionKind::Named(id) if id == param_def_id)
+                                .then_some(region)
+                        })
+                    };
+                    for requirement in contract.requirements {
+                        let source = region_for_param(requirement.source().def_id()).unwrap_or_else(|| {
+                            bug!("origin contract source is not present in instantiated call signature")
+                        });
+                        let target = region_for_param(requirement.target().def_id()).unwrap_or_else(|| {
+                            bug!("origin contract target is not present in instantiated call signature")
+                        });
+                        let source = self
+                            .universal_region_relations
+                            .universal_regions
+                            .to_region_vid(source);
+                        let target = self
+                            .universal_region_relations
+                            .universal_regions
+                            .to_region_vid(target);
+                        self.constraints.outlives_constraints.push(OutlivesConstraint {
+                            sup: source,
+                            sub: target,
+                            locations: term_location.to_locations(),
+                            span: term.source_info.span,
+                            category: ConstraintCategory::CallArgument(None),
+                            variance_info: ty::VarianceDiagInfo::default(),
+                            from_closure: false,
+                        });
+                    }
                 }
 
                 self.check_call_dest(term, &sig, destination, is_diverging, term_location);

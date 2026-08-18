@@ -516,7 +516,9 @@ impl<'tcx> Instance<'tcx> {
 
     pub fn mono(tcx: TyCtxt<'tcx>, def_id: DefId) -> Instance<'tcx> {
         let args = GenericArgs::for_item(tcx, def_id, |param, _| match param.kind {
-            ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+            ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
+                tcx.lifetimes.re_erased.into()
+            }
             ty::GenericParamDefKind::Type { .. } => {
                 bug!("Instance::mono: {:?} has type parameters", def_id)
             }

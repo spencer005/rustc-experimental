@@ -770,9 +770,10 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 };
 
                 match (&param.kind, arg) {
-                    (GenericParamDefKind::Lifetime, GenericArg::Lifetime(lt)) => {
-                        self.lowerer.lower_lifetime(lt, RegionInferReason::Param(param)).into()
-                    }
+                    (
+                        GenericParamDefKind::Lifetime | GenericParamDefKind::OriginLifetime,
+                        GenericArg::Lifetime(lt),
+                    ) => self.lowerer.lower_lifetime(lt, RegionInferReason::Param(param)).into(),
                     (&GenericParamDefKind::Type { has_default, .. }, GenericArg::Type(ty)) => {
                         // We handle the other parts of `Ty` in the match arm below
                         handle_ty_args(has_default, ty.as_unambig_ty())
@@ -814,7 +815,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                     }
                 }
                 match param.kind {
-                    GenericParamDefKind::Lifetime => {
+                    GenericParamDefKind::Lifetime | GenericParamDefKind::OriginLifetime => {
                         self.lowerer.re_infer(self.span, RegionInferReason::Param(param)).into()
                     }
                     GenericParamDefKind::Type { has_default, synthetic } => {
