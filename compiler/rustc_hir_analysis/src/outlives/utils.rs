@@ -1,5 +1,7 @@
 use rustc_data_structures::fx::FxIndexMap;
-use rustc_middle::ty::outlives::{Component, push_outlives_components};
+use rustc_middle::ty::outlives::{
+    Component, push_outlives_components, push_static_outlives_components,
+};
 use rustc_middle::ty::{self, GenericArg, GenericArgKind, Region, Ty, TyCtxt};
 use rustc_middle::{bug, span_bug};
 use rustc_span::Span;
@@ -34,7 +36,11 @@ pub(crate) fn insert_outlives_clause<'tcx>(
             // Or if within `struct Foo<U>` you had `T = Vec<U>`, then
             // we would want to add `U: 'outlived_region`
             let mut components = smallvec![];
-            push_outlives_components(tcx, ty, &mut components);
+            if outlived_region.is_static() || outlived_region.is_placeholder() {
+                push_static_outlives_components(tcx, ty, &mut components);
+            } else {
+                push_outlives_components(tcx, ty, &mut components);
+            }
             for component in components {
                 match component {
                     Component::Region(r) => {

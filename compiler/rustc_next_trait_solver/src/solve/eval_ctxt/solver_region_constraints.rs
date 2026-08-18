@@ -4,7 +4,9 @@
 use rustc_data_structures::transitive_relation::TransitiveRelationBuilder;
 use rustc_type_ir::ClauseKind::*;
 use rustc_type_ir::inherent::*;
-use rustc_type_ir::outlives::{Component, push_outlives_components};
+use rustc_type_ir::outlives::{
+    Component, push_outlives_components, push_static_outlives_components,
+};
 #[cfg(not(feature = "nightly"))]
 use rustc_type_ir::region_constraint::TransitiveRelationBuilder;
 use rustc_type_ir::region_constraint::{
@@ -158,7 +160,11 @@ where
         r: Region<I>,
     ) -> RegionConstraint<I> {
         let mut components = Default::default();
-        push_outlives_components(self.cx(), ty, &mut components);
+        if r.is_static() || r.is_var() || r.is_placeholder() {
+            push_static_outlives_components(self.cx(), ty, &mut components);
+        } else {
+            push_outlives_components(self.cx(), ty, &mut components);
+        }
         self.destructure_components(&components, r)
     }
 
@@ -209,11 +215,19 @@ where
             RegionConstraint::AliasTyOutlivesViaEnv(Binder::dummy((alias, r)));
 
         let mut components = Default::default();
-        rustc_type_ir::outlives::compute_alias_components_recursive(
-            self.cx(),
-            alias,
-            &mut components,
-        );
+        if r.is_static() || r.is_var() || r.is_placeholder() {
+            rustc_type_ir::outlives::compute_alias_components_recursive_for_static(
+                self.cx(),
+                alias,
+                &mut components,
+            );
+        } else {
+            rustc_type_ir::outlives::compute_alias_components_recursive(
+                self.cx(),
+                alias,
+                &mut components,
+            );
+        }
         let components_outlives = self.destructure_components(&components, r);
 
         RegionConstraint::Or(Box::new([

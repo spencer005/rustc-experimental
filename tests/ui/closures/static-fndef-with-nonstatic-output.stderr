@@ -1,0 +1,36 @@
+error: lifetime may not live long enough
+  --> $DIR/static-fndef-with-nonstatic-output.rs:20:5
+   |
+LL | fn check_static<'a>() {
+   |                 -- lifetime `'a` defined here
+LL |     require_static(returns::<'a>);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument requires that `'a` must outlive `'static`
+
+error: lifetime may not live long enough
+  --> $DIR/static-fndef-with-nonstatic-output.rs:25:5
+   |
+LL | fn check_indirect_static<'a: 'static, 'b>() {
+   |                          --           -- lifetime `'b` defined here
+   |                          |
+   |                          lifetime `'a` defined here
+LL |     require_region::<'a, _>(returns::<'b>);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument requires that `'b` must outlive `'a`
+   |
+   = help: consider adding the following bound: `'b: 'a`
+
+error: lifetime may not live long enough
+  --> $DIR/static-fndef-with-nonstatic-output.rs:30:5
+   |
+LL | fn check_for_all<'a>() {
+   |                  -- lifetime `'a` defined here
+LL |     require_for_all(returns::<'a>);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ argument requires that `'a` must outlive `'static`
+   |
+note: due to a current limitation of the type system, this implies a `'static` lifetime
+  --> $DIR/static-fndef-with-nonstatic-output.rs:11:5
+   |
+LL |     for<'a> T: 'a,
+   |     ^^^^^^^^^^^^^
+
+error: aborting due to 3 previous errors
+

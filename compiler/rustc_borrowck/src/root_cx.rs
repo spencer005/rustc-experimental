@@ -132,7 +132,7 @@ impl<'diag, 'tcx> BorrowCheckRootCtxt<'diag, 'tcx> {
                 input.deferred_opaque_type_errors = apply_definition_site_hidden_types(
                     &input.infcx,
                     &input.body_owned,
-                    &input.universal_region_relations.universal_regions,
+                    &input.universal_region_relations,
                     &input.region_bound_pairs,
                     &input.known_type_outlives_obligations,
                     &mut input.constraints,
@@ -254,7 +254,7 @@ impl<'diag, 'tcx> BorrowCheckRootCtxt<'diag, 'tcx> {
         if let Some(closure_requirements) = closure_requirements {
             constraint_conversion::ConstraintConversion::new(
                 &input.infcx,
-                &input.universal_region_relations.universal_regions,
+                &input.universal_region_relations,
                 &input.region_bound_pairs,
                 &input.known_type_outlives_obligations,
                 locations,

@@ -1,0 +1,41 @@
+error: lifetime may not live long enough
+  --> $DIR/dyn-erasure-tait.rs:16:5
+   |
+LL | fn helper<'a, 'b>(_: [&'b &'a (); 0]) -> F<'a, 'b> {
+   |           -- lifetime `'a` defined here
+LL |     |x: T<'a>| -> T<'b> { x } // this should *not* be `: 'static`
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'a` must outlive `'static`
+   |
+help: to declare that the trait object captures data from the argument, you can add a lifetime parameter `'a` in the type alias
+   |
+LL | type F<'a, 'a, 'b> = impl 'static + Fn(T<'a>) -> T<'b>;
+   |        +++
+help: consider adding 'move' keyword before the nested closure
+   |
+LL |     move |x: T<'a>| -> T<'b> { x } // this should *not* be `: 'static`
+   |     ++++
+
+error: lifetime may not live long enough
+  --> $DIR/dyn-erasure-tait.rs:16:5
+   |
+LL | fn helper<'a, 'b>(_: [&'b &'a (); 0]) -> F<'a, 'b> {
+   |               -- lifetime `'b` defined here
+LL |     |x: T<'a>| -> T<'b> { x } // this should *not* be `: 'static`
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'b` must outlive `'static`
+   |
+help: to declare that the trait object captures data from the argument, you can add a lifetime parameter `'a` in the type alias
+   |
+LL | type F<'a, 'a, 'b> = impl 'static + Fn(T<'a>) -> T<'b>;
+   |        +++
+help: consider adding 'move' keyword before the nested closure
+   |
+LL |     move |x: T<'a>| -> T<'b> { x } // this should *not* be `: 'static`
+   |     ++++
+
+help: the following changes may resolve your lifetime errors
+   |
+   = help: replace `'a` with `'static`
+   = help: replace `'b` with `'static`
+
+error: aborting due to 2 previous errors
+

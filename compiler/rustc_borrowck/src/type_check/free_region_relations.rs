@@ -314,10 +314,16 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
             }
         }
 
+        let universal_region_relations = Frozen::freeze(UniversalRegionRelations {
+            universal_regions: self.universal_regions,
+            outlives: self.outlives.freeze(),
+            inverse_outlives: self.inverse_outlives.freeze(),
+        });
+
         for c in constraints {
             constraint_conversion::ConstraintConversion::new(
                 self.infcx,
-                &self.universal_regions,
+                &universal_region_relations,
                 &self.region_bound_pairs,
                 &known_type_outlives_obligations,
                 Locations::All(span),
@@ -329,11 +335,7 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
         }
 
         CreateResult {
-            universal_region_relations: Frozen::freeze(UniversalRegionRelations {
-                universal_regions: self.universal_regions,
-                outlives: self.outlives.freeze(),
-                inverse_outlives: self.inverse_outlives.freeze(),
-            }),
+            universal_region_relations,
             known_type_outlives_obligations: Frozen::freeze(known_type_outlives_obligations),
             region_bound_pairs: Frozen::freeze(self.region_bound_pairs),
             normalized_inputs_and_output,

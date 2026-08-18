@@ -1,0 +1,35 @@
+error: lifetime may not live long enough
+  --> $DIR/dyn-erasure-no-tait.rs:17:13
+   |
+LL |     impl<'a, 'b> LtEq<'a, 'b> {
+   |          -- lifetime `'a` defined here
+...
+LL |             |a| unsafe { ::std::mem::transmute::<T<'a>, T<'b>>(a) }
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'a` must outlive `'static`
+   |
+help: consider adding 'move' keyword before the nested closure
+   |
+LL |             move |a| unsafe { ::std::mem::transmute::<T<'a>, T<'b>>(a) }
+   |             ++++
+
+error: lifetime may not live long enough
+  --> $DIR/dyn-erasure-no-tait.rs:17:13
+   |
+LL |     impl<'a, 'b> LtEq<'a, 'b> {
+   |              -- lifetime `'b` defined here
+...
+LL |             |a| unsafe { ::std::mem::transmute::<T<'a>, T<'b>>(a) }
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'b` must outlive `'static`
+   |
+help: consider adding 'move' keyword before the nested closure
+   |
+LL |             move |a| unsafe { ::std::mem::transmute::<T<'a>, T<'b>>(a) }
+   |             ++++
+
+help: the following changes may resolve your lifetime errors
+   |
+   = help: replace `'a` with `'static`
+   = help: replace `'b` with `'static`
+
+error: aborting due to 2 previous errors
+

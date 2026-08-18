@@ -1,6 +1,3 @@
-//@ known-bug: #112905
-//@ check-pass
-
 // Classified as an issue with implied bounds:
 // https://github.com/rust-lang/rust/issues/112905#issuecomment-1757847998
 
@@ -18,6 +15,8 @@ mod some_lib {
 
         pub fn eq(&self) -> impl 'static + Fn(T<'a>) -> T<'b> {
             |a| unsafe { ::std::mem::transmute::<T<'a>, T<'b>>(a) }
+            //~^ ERROR lifetime may not live long enough
+            //~| ERROR lifetime may not live long enough
         }
     }
 }

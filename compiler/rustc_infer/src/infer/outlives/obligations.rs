@@ -63,7 +63,9 @@ use rustc_data_structures::transitive_relation::TransitiveRelation;
 use rustc_data_structures::undo_log::UndoLogs;
 use rustc_middle::bug;
 use rustc_middle::mir::ConstraintCategory;
-use rustc_middle::ty::outlives::{Component, push_outlives_components};
+use rustc_middle::ty::outlives::{
+    Component, push_outlives_components, push_static_outlives_components,
+};
 use rustc_middle::ty::{
     self, GenericArgKind, GenericArgsRef, PolyTypeOutlivesClause, Region, RegionExt, RegionVid, Ty,
     TyCtxt, TypeVisitableExt, eager_resolve_vars,
@@ -338,7 +340,25 @@ impl<'tcx> InferCtxt<'tcx> {
                     outlives_env.known_type_outlives(),
                 );
                 let category = origin.to_constraint_category();
-                outlives.type_must_outlive(origin, sup_type, sub_region, category);
+                let preserve_static_identity = sub_region.is_static()
+                    || sub_region.is_placeholder()
+                    || sub_region.is_var()
+                    || (sub_region.is_free()
+                        && outlives_env.free_region_map().sub_free_regions(
+                            self.tcx,
+                            self.tcx.lifetimes.re_static,
+                            sub_region,
+                        ));
+                if preserve_static_identity {
+                    outlives.type_must_outlive_with_static_identity(
+                        origin,
+                        sup_type,
+                        sub_region,
+                        category,
+                    );
+                } else {
+                    outlives.type_must_outlive(origin, sup_type, sub_region, category);
+                }
             }
         }
     }
@@ -418,6 +438,29 @@ where
         region: ty::Region<'tcx>,
         category: ConstraintCategory<'tcx>,
     ) {
+        self.type_must_outlive_inner(origin, ty, region, false, category);
+    }
+
+    /// Adds the callable-interface components required when `region` is known to entail `'static`.
+    #[instrument(level = "debug", skip(self))]
+    pub fn type_must_outlive_with_static_identity(
+        &mut self,
+        origin: infer::SubregionOrigin<'tcx>,
+        ty: Ty<'tcx>,
+        region: ty::Region<'tcx>,
+        category: ConstraintCategory<'tcx>,
+    ) {
+        self.type_must_outlive_inner(origin, ty, region, true, category);
+    }
+
+    fn type_must_outlive_inner(
+        &mut self,
+        origin: infer::SubregionOrigin<'tcx>,
+        ty: Ty<'tcx>,
+        region: ty::Region<'tcx>,
+        preserve_static_identity: bool,
+        category: ConstraintCategory<'tcx>,
+    ) {
         assert!(!ty.has_escaping_bound_vars());
         debug_assert!(!ty.has_non_region_infer());
         debug_assert!(
@@ -426,8 +469,18 @@ where
         );
 
         let mut components = smallvec![];
-        push_outlives_components(self.tcx, ty, &mut components);
-        self.components_must_outlive(origin, &components, region, category);
+        if preserve_static_identity {
+            push_static_outlives_components(self.tcx, ty, &mut components);
+        } else {
+            push_outlives_components(self.tcx, ty, &mut components);
+        }
+        self.components_must_outlive(
+            origin,
+            &components,
+            region,
+            preserve_static_identity,
+            category,
+        );
     }
 
     fn components_must_outlive(
@@ -435,6 +488,7 @@ where
         origin: infer::SubregionOrigin<'tcx>,
         components: &[Component<TyCtxt<'tcx>>],
         region: ty::Region<'tcx>,
+        preserve_static_identity: bool,
         category: ConstraintCategory<'tcx>,
     ) {
         for component in components.iter() {
@@ -451,10 +505,21 @@ where
                 }
                 Component::Alias(is_rigid, alias_ty) => {
                     debug_assert_eq!(*is_rigid, ty::IsRigid::yes_if_next_solver(self.tcx));
-                    self.alias_ty_must_outlive(origin, region, *alias_ty);
+                    self.alias_ty_must_outlive(
+                        origin,
+                        region,
+                        preserve_static_identity,
+                        *alias_ty,
+                    );
                 }
                 Component::EscapingAlias(subcomponents) => {
-                    self.components_must_outlive(origin, subcomponents, region, category);
+                    self.components_must_outlive(
+                        origin,
+                        subcomponents,
+                        region,
+                        preserve_static_identity,
+                        category,
+                    );
                 }
                 Component::UnresolvedInferenceVariable(v) => {
                     // Ignore this, we presume it will yield an error later,
@@ -503,6 +568,7 @@ where
         &mut self,
         origin: infer::SubregionOrigin<'tcx>,
         region: ty::Region<'tcx>,
+        preserve_static_identity: bool,
         alias_ty: ty::AliasTy<'tcx>,
     ) {
         // An optimization for a common case with opaque types.
@@ -566,7 +632,13 @@ where
         {
             debug!("no declared bounds");
             let opt_variances = self.tcx.opt_alias_variances(kind);
-            self.args_must_outlive(alias_ty.args, origin, region, opt_variances);
+            self.args_must_outlive(
+                alias_ty.args,
+                origin,
+                region,
+                preserve_static_identity,
+                opt_variances,
+            );
             return;
         }
 
@@ -607,7 +679,11 @@ where
         // projection outlive; in some cases, this may add insufficient
         // edges into the inference graph, leading to inference failures
         // even though a satisfactory solution exists.
-        let verify_bound = self.verify_bound.alias_bound(alias_ty);
+        let verify_bound = if preserve_static_identity {
+            self.verify_bound.alias_bound_with_static_identity(alias_ty)
+        } else {
+            self.verify_bound.alias_bound(alias_ty)
+        };
         debug!("alias_must_outlive: pushing {:?}", verify_bound);
         self.delegate.push_verify(origin, GenericKind::Alias(alias_ty), region, verify_bound);
     }
@@ -618,6 +694,7 @@ where
         args: GenericArgsRef<'tcx>,
         origin: infer::SubregionOrigin<'tcx>,
         region: ty::Region<'tcx>,
+        preserve_static_identity: bool,
         opt_variances: Option<&[ty::Variance]>,
     ) {
         let constraint = origin.to_constraint_category();
@@ -639,7 +716,13 @@ where
                     }
                 }
                 GenericArgKind::Type(ty) => {
-                    self.type_must_outlive(origin.clone(), ty, region, constraint);
+                    self.type_must_outlive_inner(
+                        origin.clone(),
+                        ty,
+                        region,
+                        preserve_static_identity,
+                        constraint,
+                    );
                 }
                 GenericArgKind::Const(_) => {
                     // Const parameters don't impose constraints.

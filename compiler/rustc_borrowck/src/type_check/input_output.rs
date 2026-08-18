@@ -57,7 +57,9 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         // FIXME(async_closures): It's kind of wacky that we must apply this
         // transformation here, since we do the same thing in HIR typeck.
         // Maybe we could just fix up the canonicalized signature during HIR typeck?
-        if let DefiningTy::CoroutineClosure(_, args) = self.universal_regions.defining_ty {
+        if let DefiningTy::CoroutineClosure(_, args) =
+            self.universal_region_relations.universal_regions.defining_ty
+        {
             assert_matches!(
                 self.tcx().coroutine_kind(self.tcx().coroutine_for_closure(mir_def_id)),
                 Some(hir::CoroutineKind::Desugared(
@@ -191,7 +193,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         if let Some(mir_yield_ty) = self.body.yield_ty() {
             let yield_span = self.body.local_decls[RETURN_PLACE].source_info.span;
             self.equate_normalized_input_or_output(
-                self.universal_regions.yield_ty.unwrap(),
+                self.universal_region_relations.universal_regions.yield_ty.unwrap(),
                 mir_yield_ty,
                 yield_span,
             );
@@ -200,7 +202,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         if let Some(mir_resume_ty) = self.body.resume_ty() {
             let yield_span = self.body.local_decls[RETURN_PLACE].source_info.span;
             self.equate_normalized_input_or_output(
-                self.universal_regions.resume_ty.unwrap(),
+                self.universal_region_relations.universal_regions.resume_ty.unwrap(),
                 mir_resume_ty,
                 yield_span,
             );

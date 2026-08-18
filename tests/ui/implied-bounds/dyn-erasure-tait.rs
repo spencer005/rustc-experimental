@@ -1,6 +1,3 @@
-//@ known-bug: #112905
-//@ check-pass
-
 // Classified as an issue with implied bounds:
 // https://github.com/rust-lang/rust/issues/112905#issuecomment-1757847998
 
@@ -17,6 +14,8 @@ type F<'a, 'b> = impl 'static + Fn(T<'a>) -> T<'b>;
 #[define_opaque(F)]
 fn helper<'a, 'b>(_: [&'b &'a (); 0]) -> F<'a, 'b> {
     |x: T<'a>| -> T<'b> { x } // this should *not* be `: 'static`
+    //~^ ERROR lifetime may not live long enough
+    //~| ERROR lifetime may not live long enough
 }
 
 fn exploit<'a, 'b>(a: T<'a>) -> T<'b> {

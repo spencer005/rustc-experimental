@@ -61,11 +61,36 @@ pub fn push_outlives_components<I: Interner>(
     ty: I::Ty,
     out: &mut SmallVec<[Component<I>; 4]>,
 ) {
-    ty.visit_with(&mut OutlivesCollector { cx, out, visited: Default::default() });
+    push_outlives_components_inner(cx, ty, false, out);
+}
+
+/// Like [`push_outlives_components`], but also preserves callable-interface components when the
+/// outlives target is `'static` or is still permitted to resolve to `'static`.
+pub fn push_static_outlives_components<I: Interner>(
+    cx: I,
+    ty: I::Ty,
+    out: &mut SmallVec<[Component<I>; 4]>,
+) {
+    push_outlives_components_inner(cx, ty, true, out);
+}
+
+fn push_outlives_components_inner<I: Interner>(
+    cx: I,
+    ty: I::Ty,
+    preserve_static_identity: bool,
+    out: &mut SmallVec<[Component<I>; 4]>,
+) {
+    ty.visit_with(&mut OutlivesCollector {
+        cx,
+        preserve_static_identity,
+        out,
+        visited: Default::default(),
+    });
 }
 
 struct OutlivesCollector<'a, I: Interner> {
     cx: I,
+    preserve_static_identity: bool,
     out: &'a mut SmallVec<[Component<I>; 4]>,
     visited: SsoHashSet<I::Ty>,
 }
@@ -86,13 +111,9 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
         match ty.kind() {
             ty::FnDef(_, args) => {
                 let args = args.no_bound_vars().unwrap();
-                // HACK(eddyb) ignore lifetimes found shallowly in `args`.
-                // This is inconsistent with `ty::Adt` (including all args)
-                // and with `ty::Closure` (ignoring all args other than
-                // upvars, of which a `ty::FnDef` doesn't have any), but
-                // consistent with previous (accidental) behavior.
-                // See https://github.com/rust-lang/rust/issues/70917
-                // for further background and discussion.
+                // Keep ignoring shallow lifetime arguments for compatibility with #70917.
+                // A lifetime only participates in static identity if it is observable through
+                // the instantiated callable signature.
                 for child in args.iter() {
                     match child.kind() {
                         ty::GenericArgKind::Lifetime(_) => {}
@@ -101,33 +122,45 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
                         }
                     }
                 }
+
+                if self.preserve_static_identity {
+                    ty.fn_sig(self.cx).inputs_and_output().visit_with(self);
+                }
             }
 
+            // Closure and coroutine parent args are not independently observable. Only args
+            // present in their signature or stored state constrain structural outlives.
             ty::Closure(_, args) => {
-                args.as_closure().tupled_upvars_ty().visit_with(self);
+                let args = args.as_closure();
+                args.tupled_upvars_ty().visit_with(self);
+                if self.preserve_static_identity {
+                    args.sig_as_fn_ptr_ty().visit_with(self);
+                }
             }
 
             ty::CoroutineClosure(_, args) => {
-                args.as_coroutine_closure().tupled_upvars_ty().visit_with(self);
+                let args = args.as_coroutine_closure();
+                args.tupled_upvars_ty().visit_with(self);
+                if self.preserve_static_identity {
+                    args.signature_parts_ty().visit_with(self);
+                    args.coroutine_captures_by_ref_ty().visit_with(self);
+                }
             }
 
             ty::Coroutine(_, args) => {
-                args.as_coroutine().tupled_upvars_ty().visit_with(self);
+                let args = args.as_coroutine();
+                args.tupled_upvars_ty().visit_with(self);
 
-                // Coroutines may not outlive a region unless the resume
-                // ty outlives a region. This is because the resume ty may
-                // store data that lives shorter than this outlives region
-                // across yield points, which may subsequently be accessed
-                // after the coroutine is resumed again.
-                //
-                // Conceptually, you may think of the resume arg as an upvar
-                // of `&mut Option<ResumeArgTy>`, since it is kinda like
-                // storage shared between the callee of the coroutine and the
-                // coroutine body.
-                args.as_coroutine().resume_ty().visit_with(self);
+                // Coroutines may not outlive a region unless the resume type outlives that
+                // region. The resume value may be stored across yield points.
+                args.resume_ty().visit_with(self);
 
-                // We ignore regions in the coroutine interior as we don't
-                // want these to affect region inference
+                if self.preserve_static_identity {
+                    // Yield and return types are part of the coroutine's observable identity even
+                    // when no value of either type is currently stored in the frame.
+                    args.yield_ty().visit_with(self);
+                    args.return_ty().visit_with(self);
+                }
             }
 
             // All regions are bound inside a witness, and we don't emit
@@ -166,7 +199,12 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
                     // OutlivesProjectionComponents. Continue walking
                     // through and constrain Pi.
                     let mut subcomponents = smallvec![];
-                    compute_alias_components_recursive(self.cx, alias_ty, &mut subcomponents);
+                    compute_alias_components_recursive_inner(
+                        self.cx,
+                        alias_ty,
+                        self.preserve_static_identity,
+                        &mut subcomponents,
+                    );
                     self.out.push(Component::EscapingAlias(subcomponents.into_iter().collect()));
                 }
             }
@@ -230,9 +268,33 @@ pub fn compute_alias_components_recursive<I: Interner>(
     alias_ty: ty::AliasTy<I>,
     out: &mut SmallVec<[Component<I>; 4]>,
 ) {
+    compute_alias_components_recursive_inner(cx, alias_ty, false, out);
+}
+
+/// Like [`compute_alias_components_recursive`], but preserves callable-interface components when
+/// the outlives target is `'static` or is still permitted to resolve to `'static`.
+pub fn compute_alias_components_recursive_for_static<I: Interner>(
+    cx: I,
+    alias_ty: ty::AliasTy<I>,
+    out: &mut SmallVec<[Component<I>; 4]>,
+) {
+    compute_alias_components_recursive_inner(cx, alias_ty, true, out);
+}
+
+fn compute_alias_components_recursive_inner<I: Interner>(
+    cx: I,
+    alias_ty: ty::AliasTy<I>,
+    preserve_static_identity: bool,
+    out: &mut SmallVec<[Component<I>; 4]>,
+) {
     let opt_variances = cx.opt_alias_variances(alias_ty.kind);
 
-    let mut visitor = OutlivesCollector { cx, out, visited: Default::default() };
+    let mut visitor = OutlivesCollector {
+        cx,
+        preserve_static_identity,
+        out,
+        visited: Default::default(),
+    };
 
     for (index, child) in alias_ty.args.iter().enumerate() {
         if opt_variances.and_then(|variances| variances.get(index)) == Some(ty::Bivariant) {

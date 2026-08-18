@@ -15,14 +15,14 @@ use tracing::{debug, instrument};
 use super::{Locations, NormalizeLocation, TypeChecker};
 use crate::BorrowckInferCtxt;
 use crate::diagnostics::ToUniverseInfo;
+use crate::type_check::free_region_relations::UniversalRegionRelations;
 use crate::type_check::{MirTypeckRegionConstraints, constraint_conversion};
-use crate::universal_regions::UniversalRegions;
 
 #[instrument(skip(infcx, constraints, op), level = "trace")]
 pub(crate) fn fully_perform_op_raw<'tcx, R: fmt::Debug, Op>(
     infcx: &BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
-    universal_regions: &UniversalRegions<'tcx>,
+    universal_region_relations: &UniversalRegionRelations<'tcx>,
     region_bound_pairs: &RegionBoundPairs<'tcx>,
     known_type_outlives_obligations: &[ty::PolyTypeOutlivesClause<'tcx>],
     constraints: &mut MirTypeckRegionConstraints<'tcx>,
@@ -50,7 +50,7 @@ where
     if let Some(data) = query_constraints {
         constraint_conversion::ConstraintConversion::new(
             infcx,
-            universal_regions,
+            universal_region_relations,
             region_bound_pairs,
             known_type_outlives_obligations,
             locations,
@@ -101,7 +101,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         fully_perform_op_raw(
             self.infcx,
             self.body,
-            self.universal_regions,
+            self.universal_region_relations,
             self.region_bound_pairs,
             self.known_type_outlives_obligations,
             self.constraints,

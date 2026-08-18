@@ -155,7 +155,7 @@ pub(crate) fn type_check<'tcx>(
         region_bound_pairs: &region_bound_pairs,
         known_type_outlives_obligations: &known_type_outlives_obligations,
         reported_errors: Default::default(),
-        universal_regions: &universal_region_relations.universal_regions,
+        universal_region_relations: &universal_region_relations,
         location_table,
         polonius_facts,
         borrow_set,
@@ -176,7 +176,7 @@ pub(crate) fn type_check<'tcx>(
     if infcx.tcx.assumptions_on_binders() {
         let mut converter = constraint_conversion::ConstraintConversion::new(
             typeck.infcx,
-            typeck.universal_regions,
+            &universal_region_relations,
             typeck.region_bound_pairs,
             typeck.known_type_outlives_obligations,
             Locations::All(rustc_span::DUMMY_SP),
@@ -241,7 +241,7 @@ struct TypeChecker<'a, 'tcx> {
     region_bound_pairs: &'a RegionBoundPairs<'tcx>,
     known_type_outlives_obligations: &'a [ty::PolyTypeOutlivesClause<'tcx>],
     reported_errors: FxIndexSet<(Ty<'tcx>, Span)>,
-    universal_regions: &'a UniversalRegions<'tcx>,
+    universal_region_relations: &'a UniversalRegionRelations<'tcx>,
     location_table: &'a PoloniusLocationTable,
     polonius_facts: &'a mut Option<PoloniusFacts>,
     borrow_set: &'a BorrowSet<'tcx>,
@@ -414,7 +414,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
 
         constraint_conversion::ConstraintConversion::new(
             self.infcx,
-            self.universal_regions,
+            self.universal_region_relations,
             self.region_bound_pairs,
             self.known_type_outlives_obligations,
             locations,
@@ -614,7 +614,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                 // though.
                 let category = match place.as_local() {
                     Some(RETURN_PLACE) => {
-                        let defining_ty = &self.universal_regions.defining_ty;
+                        let defining_ty = &self.universal_region_relations.universal_regions.defining_ty;
                         if defining_ty.is_const() {
                             if tcx.is_static(defining_ty.def_id()) {
                                 ConstraintCategory::UseAsStatic
@@ -858,7 +858,10 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                 // output) types in the signature must be live, since
                 // all the inputs that fed into it were live.
                 for &late_bound_region in map.values() {
-                    let region_vid = self.universal_regions.to_region_vid(late_bound_region);
+                    let region_vid = self
+                        .universal_region_relations
+                        .universal_regions
+                        .to_region_vid(late_bound_region);
                     self.constraints.liveness_constraints.add_location(region_vid, term_location);
                 }
 
@@ -1561,8 +1564,14 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                                     // `struct_tail` returns regions which haven't been mapped
                                     // to nll vars yet so we do it here as `outlives_constraints`
                                     // expects nll vars.
-                                    let src_lt = self.universal_regions.to_region_vid(src_lt);
-                                    let dst_lt = self.universal_regions.to_region_vid(dst_lt);
+                                    let src_lt = self
+                                        .universal_region_relations
+                                        .universal_regions
+                                        .to_region_vid(src_lt);
+                                    let dst_lt = self
+                                        .universal_region_relations
+                                        .universal_regions
+                                        .to_region_vid(dst_lt);
 
                                     // The principalless (no non-auto traits) case:
                                     // You can only cast `dyn Send + 'long` to `dyn Send + 'short`.
@@ -1737,7 +1746,10 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         let ty = constant.const_.ty();
 
         self.infcx.tcx.for_each_free_region(&ty, |live_region| {
-            let live_region_vid = self.universal_regions.to_region_vid(live_region);
+            let live_region_vid = self
+                .universal_region_relations
+                .universal_regions
+                .to_region_vid(live_region);
             self.constraints.liveness_constraints.add_location(live_region_vid, location);
         });
 
@@ -1820,14 +1832,14 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
             } else if let Const::Ty(_, ct) = constant.const_
                 && let ty::ConstKind::Param(p) = ct.kind()
             {
-                let body_def_id = self.universal_regions.defining_ty.def_id();
+                let body_def_id = self.universal_region_relations.universal_regions.defining_ty.def_id();
                 let const_param = tcx.generics_of(body_def_id).const_param(p, tcx);
                 self.ascribe_user_type(
                     constant.const_.ty(),
                     ty::UserType::new(ty::UserTypeKind::TypeOf(
                         const_param.def_id,
                         UserArgs {
-                            args: self.universal_regions.defining_ty.args(),
+                            args: self.universal_region_relations.universal_regions.defining_ty.args(),
                             user_self_ty: None,
                         },
                     )),
@@ -1971,7 +1983,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
             let category = match destination.as_local() {
                 Some(RETURN_PLACE) => {
                     if let DefiningTy::Const(def_id, _) | DefiningTy::InlineConst(def_id, _) =
-                        self.universal_regions.defining_ty
+                        self.universal_region_relations.universal_regions.defining_ty
                     {
                         if tcx.is_static(def_id) {
                             ConstraintCategory::UseAsStatic

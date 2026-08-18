@@ -5,7 +5,7 @@ use smallvec::smallvec;
 use crate::data_structures::HashSet;
 use crate::inherent::*;
 use crate::lang_items::SolverTraitLangItem;
-use crate::outlives::{Component, push_outlives_components};
+use crate::outlives::{Component, push_outlives_components, push_static_outlives_components};
 use crate::{self as ty, Interner, Region, Unnormalized, Upcast as _};
 
 /// "Elaboration" is the process of identifying all the predicates that
@@ -217,7 +217,11 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
                 }
 
                 let mut components = smallvec![];
-                push_outlives_components(cx, ty_max, &mut components);
+                if r_min.is_static() || r_min.is_var() || r_min.is_placeholder() {
+                    push_static_outlives_components(cx, ty_max, &mut components);
+                } else {
+                    push_outlives_components(cx, ty_max, &mut components);
+                }
                 self.extend_deduped(
                     components
                         .into_iter()
@@ -397,7 +401,11 @@ pub fn elaborate_outlives_assumptions<I: Interner>(
             // generic coroutine with a more specific type.
             ty::GenericArgKind::Type(ty1) => {
                 let mut components = smallvec![];
-                push_outlives_components(cx, ty1, &mut components);
+                if r2.is_static() || r2.is_var() || r2.is_placeholder() {
+                    push_static_outlives_components(cx, ty1, &mut components);
+                } else {
+                    push_outlives_components(cx, ty1, &mut components);
+                }
                 for c in components {
                     match c {
                         Component::Region(r1) => {

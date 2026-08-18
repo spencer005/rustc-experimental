@@ -29,7 +29,7 @@ use crate::session_diagnostics::LifetimeMismatchOpaqueParam;
 use crate::type_check::canonical::fully_perform_op_raw;
 use crate::type_check::free_region_relations::UniversalRegionRelations;
 use crate::type_check::{Locations, MirTypeckRegionConstraints};
-use crate::universal_regions::{RegionClassification, UniversalRegions};
+use crate::universal_regions::RegionClassification;
 use crate::{BorrowckInferCtxt, CollectRegionConstraintsResult};
 
 mod member_constraints;
@@ -529,7 +529,7 @@ impl<'tcx> FallibleTypeFolder<TyCtxt<'tcx>> for ToArgRegionsFolder<'_, 'tcx> {
 pub(crate) fn apply_definition_site_hidden_types<'tcx>(
     infcx: &BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
-    universal_regions: &UniversalRegions<'tcx>,
+    universal_region_relations: &UniversalRegionRelations<'tcx>,
     region_bound_pairs: &RegionBoundPairs<'tcx>,
     known_type_outlives_obligations: &[ty::PolyTypeOutlivesClause<'tcx>],
     constraints: &mut MirTypeckRegionConstraints<'tcx>,
@@ -586,7 +586,7 @@ pub(crate) fn apply_definition_site_hidden_types<'tcx>(
         if let Err(guar) = fully_perform_op_raw(
             infcx,
             body,
-            universal_regions,
+            universal_region_relations,
             region_bound_pairs,
             known_type_outlives_obligations,
             constraints,
