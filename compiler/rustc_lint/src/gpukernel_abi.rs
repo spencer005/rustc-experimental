@@ -127,7 +127,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for CheckGpuKernelTypes<'tcx> {
             | ty::FnPtr(..)
             | ty::Foreign(_)
             | ty::Never
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::Placeholder(_)
             | ty::Ref(_, _, _)
             | ty::Slice(_)

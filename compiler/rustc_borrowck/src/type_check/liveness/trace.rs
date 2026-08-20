@@ -616,10 +616,8 @@ impl<'tcx> LivenessContext<'_, '_, 'tcx> {
             tcx: typeck.tcx(),
             param_env: typeck.infcx.param_env,
             op: |r| {
-                let live_region_vid = typeck
-                    .universal_region_relations
-                    .universal_regions
-                    .to_region_vid(r);
+                let live_region_vid =
+                    typeck.universal_region_relations.universal_regions.to_region_vid(r);
 
                 typeck.constraints.liveness_constraints.add_points(live_region_vid, live_at);
             },

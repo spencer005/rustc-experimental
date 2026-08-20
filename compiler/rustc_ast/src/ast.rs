@@ -3314,10 +3314,24 @@ pub struct ForeignMod {
     pub items: ThinVec<Box<ForeignItem>>,
 }
 
+
 #[derive(Clone, Encodable, Decodable, Debug, Walkable)]
 pub struct EnumDef {
     pub variants: ThinVec<Variant>,
 }
+
+#[derive(Clone, Encodable, Decodable, Debug, Walkable)]
+pub enum VariantResult {
+    Default,
+    Explicit(Box<Ty>),
+}
+
+#[derive(Clone, Encodable, Decodable, Debug, Walkable)]
+pub enum VariantSchemeSyntax {
+    Ordinary,
+    Refined { generics: Generics, result: VariantResult },
+}
+
 
 /// Enum variant.
 #[derive(Clone, Encodable, Decodable, Debug, Walkable)]
@@ -3335,6 +3349,7 @@ pub struct Variant {
 
     /// Fields and constructor id of the variant.
     pub data: VariantData,
+    pub scheme: VariantSchemeSyntax,
     /// Explicit discriminant, e.g., `Foo = 1`.
     pub disr_expr: Option<AnonConst>,
     /// Is a macro placeholder.

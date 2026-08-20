@@ -245,7 +245,7 @@ fn reduce_ty<'tcx>(cx: &LateContext<'tcx>, mut ty: Ty<'tcx>) -> ReducedTy<'tcx> 
             .try_normalize_erasing_regions(cx.typing_env(), Unnormalized::new_wip(ty))
             .unwrap_or(ty);
         return match *ty.kind() {
-            ty::Pat(base, _) => {
+            ty::Refined(base, _) => {
                 ty = base;
                 continue;
             },

@@ -483,6 +483,9 @@ pub fn check_crate(krate: &ast::Crate, sess: &Session, features: &Features) {
     gate_all!(pin_ergonomics, "pinned reference syntax is experimental");
     gate_all!(postfix_match, "postfix match is experimental");
     gate_all!(return_type_notation, "return type notation is experimental");
+    gate_all!(refined_enums, "indexed enum constructor syntax is experimental");
+
+
     gate_all!(
         splat,
         "`fn(#[rustc_splat] (a, ...))` is incomplete",

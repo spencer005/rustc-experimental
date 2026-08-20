@@ -454,7 +454,7 @@ impl<'tcx> ConstToPat<'tcx> {
                     PatKind::Constant { value }
                 }
             }
-            ty::Pat(..) | ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::RawPtr(..) => {
+            ty::Refined(..) | ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::RawPtr(..) => {
                 // The raw pointers we see here have been "vetted" by valtree construction to be
                 // just integers, so we simply allow them.
                 PatKind::Constant { value }

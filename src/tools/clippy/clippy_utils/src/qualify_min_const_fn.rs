@@ -155,7 +155,9 @@ fn check_rvalue<'tcx>(
             | CastKind::FnPtrToPtr
             | CastKind::PtrToPtr
             | CastKind::PointerCoercion(PointerCoercion::MutToConstPointer | PointerCoercion::ArrayToPointer, _)
-            | CastKind::Subtype,
+            | CastKind::Subtype
+            | CastKind::RefinementConstruct
+            | CastKind::RefinementForget,
             operand,
             _,
         ) => check_operand(cx, operand, span, body, msrv),

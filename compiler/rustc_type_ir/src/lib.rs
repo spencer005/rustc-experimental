@@ -53,6 +53,7 @@ mod opaque_ty;
 mod pattern;
 mod predicate;
 mod predicate_kind;
+mod refinement;
 mod region_kind;
 #[cfg(feature = "nightly")]
 mod serialize;
@@ -84,6 +85,8 @@ pub use opaque_ty::*;
 pub use pattern::*;
 pub use predicate::*;
 pub use predicate_kind::*;
+pub use refinement::*;
+
 pub use region_kind::*;
 pub use rustc_ast_ir::{FloatTy, IntTy, Movability, Mutability, Pinnedness, UintTy};
 use rustc_type_ir_macros::GenericTypeVisitable;

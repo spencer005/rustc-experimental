@@ -125,9 +125,34 @@ impl<'tcx> PlaceTy<'tcx> {
     ) -> Unnormalized<'tcx, Ty<'tcx>> {
         if let Some(variant_index) = variant_idx {
             match *self_ty.kind() {
-                ty::Adt(adt_def, args) if adt_def.is_enum() => {
-                    adt_def.variant(variant_index).fields[f].ty(tcx, args)
+                ty::Adt(adt_def, args) if adt_def.is_enum() => adt_def
+                    .variant(variant_index)
+                    .field_ty(tcx, f, args)
+                    .unwrap_or_else(|err| {
+                        bug!(
+                            "cannot recover field {f:?} of variant {variant_index:?} for {self_ty}: {err:?}"
+                        )
+                    }),
+                ty::Refined(base, refinement)
+                    if matches!(
+                        tcx.refinement_type_invariant(refinement),
+                        ty::RefinementTypeInvariant::ExactConstructor(_)
+                    )
+                    && matches!(base.kind(), ty::Adt(def, _) if def.is_enum()) =>
+                {
+                    let ty::Adt(adt_def, args) = *base.kind() else {
+                        unreachable!()
+                    };
+                    adt_def
+                        .variant(variant_index)
+                        .field_ty(tcx, f, args)
+                        .unwrap_or_else(|err| {
+                            bug!(
+                                "cannot recover field {f:?} of exact variant {variant_index:?} for {self_ty}: {err:?}"
+                            )
+                        })
                 }
+
                 ty::Coroutine(def_id, args) => {
                     let mut variants = args.as_coroutine().state_tys(def_id, tcx);
                     let Some(mut variant) = variants.nth(variant_index.into()) else {
@@ -795,7 +820,9 @@ impl<'tcx> Rvalue<'tcx> {
                 | CastKind::PointerWithExposedProvenance
                 | CastKind::Transmute
                 | CastKind::BoxDerefTransmute
-                | CastKind::Subtype,
+                | CastKind::Subtype
+                | CastKind::RefinementConstruct
+                | CastKind::RefinementForget,
                 _,
                 _,
             )
@@ -848,8 +875,14 @@ impl<'tcx> Rvalue<'tcx> {
                 AggregateKind::Tuple => {
                     Ty::new_tup_from_iter(tcx, ops.iter().map(|op| op.ty(local_decls, tcx)))
                 }
-                AggregateKind::Adt(did, _, args, _, _) => {
-                    tcx.type_of(did).instantiate(tcx, args).skip_norm_wip()
+                AggregateKind::Adt(did, variant_idx, args, _, _) => {
+                    let base = tcx.type_of(did).instantiate(tcx, args).skip_norm_wip();
+                    let adt = tcx.adt_def(did);
+                    if adt.is_enum() && tcx.enum_preserves_exact_variants(did) {
+                        let variant = adt.variant(variant_idx);
+                        return tcx.exact_variant_ty(base, variant.def_id);
+                    }
+                    base
                 }
                 AggregateKind::Closure(did, args) => Ty::new_closure(tcx, did, args),
                 AggregateKind::Coroutine(did, args) => Ty::new_coroutine(tcx, did, args),

@@ -371,7 +371,7 @@ fn evaluate_host_effect_for_copy_clone_goal<'tcx>(
 
         // Cannot implement in core, as we can't be generic over patterns yet,
         // so we'd have to list all patterns and type combinations.
-        ty::Pat(ty, ..) => Ok(ty::Binder::dummy(vec![ty])),
+        ty::Refined(ty, ..) => Ok(ty::Binder::dummy(vec![ty])),
 
         ty::Dynamic(..)
         | ty::Str
@@ -480,7 +480,7 @@ fn evaluate_host_effect_for_destruct_goal<'tcx>(
             const_conditions
         }
 
-        ty::Array(ty, _) | ty::Pat(ty, _) | ty::Slice(ty) => {
+        ty::Array(ty, _) | ty::Refined(ty, _) | ty::Slice(ty) => {
             thin_vec![ty::TraitRef::new(tcx, destruct_def_id, [ty])]
         }
 

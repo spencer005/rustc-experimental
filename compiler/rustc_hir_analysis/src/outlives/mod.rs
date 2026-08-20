@@ -13,7 +13,7 @@ pub(super) fn inferred_outlives_of(
     item_def_id: LocalDefId,
 ) -> &[(ty::Clause<'_>, Span)] {
     match tcx.def_kind(item_def_id) {
-        DefKind::Struct | DefKind::Enum | DefKind::Union => {
+        DefKind::Struct | DefKind::Enum | DefKind::Union | DefKind::Variant => {
             let crate_map = tcx.inferred_outlives_crate(());
             crate_map.clauses.get(&item_def_id.to_def_id()).copied().unwrap_or(&[])
         }

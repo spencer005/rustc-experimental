@@ -19,7 +19,7 @@ use std::{assert_matches, debug_assert_matches, iter};
 
 use rustc_abi::{ExternAbi, Size};
 use rustc_ast::Recovered;
-use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
+use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_data_structures::thin_vec::{ThinVec, thin_vec};
 use rustc_errors::{
     Applicability, Diag, DiagCtxtHandle, Diagnostic, E0228, ErrorGuaranteed, Level, StashKey,
@@ -33,8 +33,8 @@ use rustc_infer::traits::{DynCompatibilityViolation, ObligationCause};
 use rustc_middle::query::Providers;
 use rustc_middle::ty::util::{Discr, IntTypeExt};
 use rustc_middle::ty::{
-    self, AdtKind, Const, IsSuggestable, RegionExt, Ty, TyCtxt, TypeVisitableExt, TypingMode,
-    Unnormalized, fold_regions,
+    self, AdtKind, Const, GenericArg, GenericArgKind, IsSuggestable, RegionExt, Ty, TyCtxt,
+    TypeVisitableExt, TypingMode, Unnormalized, Upcast, fold_regions,
 };
 use rustc_middle::{bug, span_bug};
 use rustc_span::{DUMMY_SP, Ident, Span, Symbol, kw, sym};
@@ -72,6 +72,8 @@ pub(crate) fn provide(providers: &mut Providers) {
         item_non_self_bounds: item_bounds::item_non_self_bounds,
         impl_super_outlives: item_bounds::impl_super_outlives,
         generics_of: generics_of::generics_of,
+        variant_binder_scheme: generics_of::variant_binder_scheme,
+        variant_scheme,
         clauses_of: clauses_of::clauses_of,
         explicit_clauses_of: clauses_of::explicit_clauses_of,
         explicit_super_clauses_of: clauses_of::explicit_super_clauses_of,
@@ -663,6 +665,13 @@ pub(super) fn check_enum_variant_types(tcx: TyCtxt<'_>, def_id: LocalDefId) {
 
     // fill the discriminant values and field types
     for variant in def.variants() {
+        let variant_hir = tcx.hir_node_by_def_id(variant.def_id.expect_local());
+        let hir::Node::Variant(variant_hir) = variant_hir else {
+            span_bug!(tcx.def_span(variant.def_id), "enum variant DefId did not map to HIR variant")
+        };
+        if matches!(variant_hir.scheme, hir::VariantSchemeSyntax::Refined { .. }) {
+            let _ = tcx.variant_scheme(variant.def_id);
+        }
         let wrapped_discr = prev_discr.map_or(initial, |d| d.wrap_incr(tcx));
         let cur_discr = if let ty::VariantDiscr::Explicit(const_def_id) = variant.discr {
             def.eval_explicit_discr(tcx, const_def_id).ok()
@@ -1003,10 +1012,310 @@ fn trait_def(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::TraitDef {
     }
 }
 
+fn variant_result_ty<'tcx>(tcx: TyCtxt<'tcx>, variant: &'tcx hir::Variant<'tcx>) -> Ty<'tcx> {
+    let family_def_id = tcx.local_parent(variant.def_id);
+    let family_ty = tcx.type_of(family_def_id).instantiate_identity().skip_norm_wip();
+
+    let hir::VariantSchemeSyntax::Refined { result, .. } = variant.scheme else {
+        return family_ty;
+    };
+    let hir::VariantResult::Explicit(result_hir) = result else {
+        return family_ty;
+    };
+
+    let result_ty = ItemCtxt::new(tcx, variant.def_id).lower_ty(result_hir);
+    if result_ty.references_error() {
+        return result_ty;
+    }
+
+    if let ty::Adt(result_adt, _) = result_ty.kind()
+        && result_adt.did() == family_def_id.to_def_id()
+    {
+        return result_ty;
+    }
+
+    let family_name = tcx.item_name(family_def_id.to_def_id());
+    let guar = tcx.dcx().struct_span_err(
+        result_hir.span,
+        format!(
+            "constructor result must be an application of its enum family `{family_name}`; found `{result_ty}`; use `{family_name}<...>` (or omit `-> ...` for the default family application)"
+
+        ),
+    ).emit();
+    Ty::new_error(tcx, guar)
+}
+fn collect_scheme_param_uses(ty: Ty<'_>, used: &mut FxHashSet<u32>) {
+    for arg in ty.walk() {
+        match arg.kind() {
+            GenericArgKind::Type(ty) => {
+                if let ty::Param(param) = *ty.kind() {
+                    used.insert(param.index);
+                }
+            }
+            GenericArgKind::Lifetime(region) => {
+                if let ty::ReEarlyParam(param) = region.kind() {
+                    used.insert(param.index);
+                }
+            }
+            GenericArgKind::Const(ct) => {
+                if let ty::ConstKind::Param(param) = ct.kind() {
+                    used.insert(param.index);
+                }
+            }
+        }
+    }
+}
+
+fn record_recovery(
+    param_index: u32,
+    path: &[ty::VariantResultProjection],
+    recoveries: &mut FxIndexMap<u32, Vec<ty::VariantResultProjection>>,
+) {
+    recoveries.entry(param_index).or_insert_with(|| path.to_vec());
+}
+
+fn collect_recoverable_arg(
+    arg: GenericArg<'_>,
+    path: &mut Vec<ty::VariantResultProjection>,
+    recoveries: &mut FxIndexMap<u32, Vec<ty::VariantResultProjection>>,
+) {
+    match arg.kind() {
+        GenericArgKind::Type(ty) => collect_recoverable_ty(ty, path, recoveries),
+        GenericArgKind::Lifetime(region) => match region.kind() {
+            ty::ReEarlyParam(param) => record_recovery(param.index, path, recoveries),
+            ty::ReStatic
+            | ty::ReBound(..)
+            | ty::ReLateParam(..)
+            | ty::ReVar(_)
+            | ty::RePlaceholder(_)
+            | ty::ReErased
+            | ty::ReError(_) => {}
+        },
+        GenericArgKind::Const(ct) => match ct.kind() {
+            ty::ConstKind::Param(param) => record_recovery(param.index, path, recoveries),
+            ty::ConstKind::Value(_)
+            | ty::ConstKind::Infer(_)
+            | ty::ConstKind::Bound(..)
+            | ty::ConstKind::Placeholder(_)
+            | ty::ConstKind::Alias(..)
+            | ty::ConstKind::Error(_)
+            | ty::ConstKind::Expr(_) => {}
+        },
+    }
+}
+
+fn collect_recoverable_ty(
+    ty: Ty<'_>,
+    path: &mut Vec<ty::VariantResultProjection>,
+    recoveries: &mut FxIndexMap<u32, Vec<ty::VariantResultProjection>>,
+) {
+    match *ty.kind() {
+        ty::Param(param) => record_recovery(param.index, path, recoveries),
+        ty::Adt(_, args) => {
+            for (index, arg) in args.iter().enumerate() {
+                path.push(ty::VariantResultProjection::GenericArg(index as u32));
+                collect_recoverable_arg(arg, path, recoveries);
+                path.pop();
+            }
+        }
+        ty::Array(element, len) => {
+            path.push(ty::VariantResultProjection::ArrayElement);
+            collect_recoverable_ty(element, path, recoveries);
+            path.pop();
+            path.push(ty::VariantResultProjection::ArrayLength);
+            collect_recoverable_arg(len.into(), path, recoveries);
+            path.pop();
+        }
+        ty::Slice(element) => {
+            path.push(ty::VariantResultProjection::SliceElement);
+            collect_recoverable_ty(element, path, recoveries);
+            path.pop();
+        }
+        ty::RawPtr(pointee, _) => {
+            path.push(ty::VariantResultProjection::RawPointee);
+            collect_recoverable_ty(pointee, path, recoveries);
+            path.pop();
+        }
+        ty::Ref(region, pointee, _) => {
+            path.push(ty::VariantResultProjection::RefRegion);
+            collect_recoverable_arg(region.into(), path, recoveries);
+            path.pop();
+            path.push(ty::VariantResultProjection::RefPointee);
+            collect_recoverable_ty(pointee, path, recoveries);
+            path.pop();
+        }
+        ty::Tuple(types) => {
+            for (index, element) in types.iter().enumerate() {
+                path.push(ty::VariantResultProjection::TupleElement(index as u32));
+                collect_recoverable_ty(element, path, recoveries);
+                path.pop();
+            }
+        }
+        ty::Bool
+        | ty::Char
+        | ty::Int(_)
+        | ty::Uint(_)
+        | ty::Float(_)
+        | ty::Foreign(_)
+        | ty::Str
+        | ty::Refined(..)
+        | ty::FnDef(..)
+        | ty::FnPtr(..)
+        | ty::UnsafeBinder(_)
+        | ty::Dynamic(..)
+        | ty::Closure(..)
+        | ty::CoroutineClosure(..)
+        | ty::Coroutine(..)
+        | ty::CoroutineWitness(..)
+        | ty::Never
+        | ty::Alias(..)
+        | ty::Bound(..)
+        | ty::Placeholder(_)
+        | ty::Infer(_)
+        | ty::Error(_) => {}
+    }
+}
+
+fn validate_variant_scheme_recoverability(
+    tcx: TyCtxt<'_>,
+    variant: &hir::Variant<'_>,
+    generics: &ty::Generics,
+    fields: &[ty::VariantFieldTemplate<'_>],
+    result: Ty<'_>,
+) -> Result<Vec<ty::VariantBinderRecovery>, ErrorGuaranteed> {
+    let mut semantic_uses = FxHashSet::default();
+    for field in fields {
+        collect_scheme_param_uses(field.ty, &mut semantic_uses);
+    }
+    collect_scheme_param_uses(result, &mut semantic_uses);
+
+    let mut recovery_paths = FxIndexMap::default();
+    collect_recoverable_ty(result, &mut Vec::new(), &mut recovery_paths);
+
+    let result_span = match variant.scheme {
+        hir::VariantSchemeSyntax::Refined {
+            result: hir::VariantResult::Explicit(result),
+            ..
+        } => result.span,
+        hir::VariantSchemeSyntax::Refined { result: hir::VariantResult::Default, .. } => variant.span,
+        hir::VariantSchemeSyntax::Ordinary => {
+            bug!("recoverability validation requested for an ordinary enum variant")
+        }
+    };
+
+    for param in &generics.own_params {
+        if !semantic_uses.contains(&param.index) || recovery_paths.contains_key(&param.index) {
+            continue;
+        }
+
+        let binder_span = tcx.def_span(param.def_id);
+        let mut diag = tcx.dcx().struct_span_err(
+            binder_span,
+            format!(
+                "constructor binder `{}` is not recoverable from the declared result `{result}`",
+                param.name
+            ),
+        );
+        diag.span_label(binder_span, "this binder participates in the constructed value");
+        diag.span_label(
+            result_span,
+            format!("this result does not determine `{}` through a recoverable type position", param.name),
+        );
+        diag.help(format!(
+            "make `{}` part of the result through a recoverable form such as a direct family argument, tuple, nominal type argument, array, slice, raw pointer, or reference; otherwise remove it from stored fields and result-dependent state",
+            param.name
+        ));
+        return Err(diag.emit());
+    }
+
+    Ok(generics
+        .own_params
+        .iter()
+        .filter_map(|param| {
+            recovery_paths.get(&param.index).map(|path| ty::VariantBinderRecovery {
+                binder_def_id: param.def_id,
+                path: path.clone(),
+            })
+        })
+        .collect())
+}
+
+fn variant_scheme(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::VariantScheme<'_> {
+    let hir::Node::Variant(variant) = tcx.hir_node_by_def_id(def_id) else {
+        span_bug!(tcx.def_span(def_id), "constructor scheme requested for non-variant definition")
+    };
+
+    let hir::VariantSchemeSyntax::Refined { .. } = variant.scheme else {
+        return ty::VariantScheme::Ordinary;
+    };
+
+    let family_def_id = tcx.local_parent(def_id);
+    let binders = tcx.variant_binder_scheme(def_id).clone();
+    let scheme_generics = tcx.generics_of(def_id);
+    let fields: Vec<_> = variant
+        .data
+        .fields()
+        .iter()
+        .map(|field| ty::VariantFieldTemplate {
+            def_id: field.def_id.to_def_id(),
+            ty: tcx.type_of(field.def_id).instantiate_identity().skip_norm_wip(),
+        })
+        .collect();
+    let result = variant_result_ty(tcx, variant);
+    if let Err(guar) = result.error_reported() {
+        return ty::VariantScheme::Invalid(guar);
+    }
+    let recoveries = match validate_variant_scheme_recoverability(
+        tcx,
+        variant,
+        scheme_generics,
+        &fields,
+        result,
+    ) {
+        Ok(recoveries) => recoveries,
+        Err(guar) => return ty::VariantScheme::Invalid(guar),
+    };
+    let construction_clauses = {
+        let mut clauses = FxIndexSet::default();
+        clauses.extend(tcx.explicit_clauses_of(def_id).clauses.iter().copied());
+        clauses.extend(
+            tcx.inferred_outlives_of(def_id)
+                .iter()
+                .map(|(clause, span)| ((*clause).upcast(tcx), *span)),
+        );
+
+        if !result.references_error() {
+            let ty::Adt(result_adt, result_args) = result.kind() else {
+                bug!("validated refined constructor result was not an ADT")
+            };
+            debug_assert_eq!(result_adt.did(), family_def_id.to_def_id());
+            clauses.extend(
+                tcx.clauses_of(family_def_id)
+                    .instantiate(tcx, result_args)
+                    .into_iter()
+                    .map(|(clause, span)| (clause.skip_norm_wip(), span)),
+            );
+        }
+
+        ty::GenericClauses { parent: None, clauses: tcx.arena.alloc_from_iter(clauses) }
+    };
+
+    ty::VariantScheme::Refined(ty::RefinedVariantScheme {
+        variant_def_id: def_id.to_def_id(),
+        family_def_id: family_def_id.to_def_id(),
+        binders,
+        fields,
+        result,
+        recoveries,
+        construction_clauses,
+    })
+}
+
 #[instrument(level = "debug", skip(tcx), ret)]
 fn fn_sig(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<'_, ty::PolyFnSig<'_>> {
     use rustc_hir::Node::*;
     use rustc_hir::*;
+    use rustc_middle::ty::Ty as MiddleTy;
 
     let hir_id = tcx.local_def_id_to_hir_id(def_id);
 
@@ -1060,14 +1369,64 @@ fn fn_sig(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<'_, ty::PolyFn
 
         Ctor(data) => {
             assert_matches!(data.ctor(), Some(_));
-            let adt_def_id = tcx.hir_get_parent_item(hir_id).def_id.to_def_id();
-            let ty = tcx.type_of(adt_def_id).instantiate_identity().skip_norm_wip();
-            let inputs = data
-                .fields()
-                .iter()
-                .map(|f| tcx.type_of(f.def_id).instantiate_identity().skip_norm_wip());
-            ty::Binder::dummy(tcx.mk_fn_sig_rust_abi(inputs, ty, hir::Safety::Safe))
+            let parent = tcx.parent_hir_node(hir_id);
+            match parent {
+                hir::Node::Variant(variant) => {
+                    let family_def_id = tcx.hir_get_parent_item(hir_id).def_id.to_def_id();
+                    let family_ty = tcx.type_of(family_def_id).instantiate_identity().skip_norm_wip();
+                    match tcx.variant_scheme(variant.def_id) {
+                        ty::VariantScheme::Refined(scheme) => {
+                            let inputs = scheme.fields.iter().map(|field| field.ty);
+                            let output = if tcx.enum_preserves_exact_variants(family_def_id) {
+                                tcx.exact_variant_ty(scheme.result, variant.def_id.to_def_id())
+                            } else {
+                                scheme.result
+                            };
+                            ty::Binder::dummy(tcx.mk_fn_sig_rust_abi(
+                                inputs,
+                                output,
+                                hir::Safety::Safe,
+                            ))
+                        }
+                        ty::VariantScheme::Invalid(guar) => {
+                            let inputs = std::iter::repeat_n(
+                                MiddleTy::new_error(tcx, *guar),
+                                data.fields().len(),
+                            );
+                            ty::Binder::dummy(tcx.mk_fn_sig_rust_abi(
+                                inputs,
+                                MiddleTy::new_error(tcx, *guar),
+                                hir::Safety::Safe,
+                            ))
+                        }
+                        ty::VariantScheme::Ordinary => {
+                            let inputs = variant
+                                .data
+                                .fields()
+                                .iter()
+                                .map(|f| tcx.type_of(f.def_id).instantiate_identity().skip_norm_wip());
+                            let output = if tcx.enum_preserves_exact_variants(family_def_id) {
+                                tcx.exact_variant_ty(family_ty, variant.def_id.to_def_id())
+                            } else {
+                                family_ty
+                            };
+                            ty::Binder::dummy(tcx.mk_fn_sig_rust_abi(inputs, output, hir::Safety::Safe))
+                        }
+                    }
+                }
+                hir::Node::Item(_) => {
+                    let adt_def_id = tcx.hir_get_parent_item(hir_id).def_id.to_def_id();
+                    let ty = tcx.type_of(adt_def_id).instantiate_identity().skip_norm_wip();
+                    let inputs = data
+                        .fields()
+                        .iter()
+                        .map(|f| tcx.type_of(f.def_id).instantiate_identity().skip_norm_wip());
+                    ty::Binder::dummy(tcx.mk_fn_sig_rust_abi(inputs, ty, hir::Safety::Safe))
+                }
+                node => bug!("constructor has unexpected HIR parent: {node:?}"),
+            }
         }
+
 
         Expr(&hir::Expr { kind: hir::ExprKind::Closure { .. }, .. }) => {
             // Closure signatures are not like other function

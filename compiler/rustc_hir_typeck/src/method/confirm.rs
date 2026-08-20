@@ -277,6 +277,23 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
             None => {}
         }
 
+        if pick.refinement_forget {
+            let Some(refinement_target) = self.tcx.refinement_forget_target(target) else {
+                bug!("method pick requested refinement forgetting for unsupported receiver {target}");
+            };
+            match self.tcx.refinement_conversion(target, refinement_target) {
+                Some(
+                    ty::RefinementConversion::ForgetExactConstructor
+                    | ty::RefinementConversion::ForgetSharedExactConstructor { .. },
+                ) => {}
+                conversion => bug!(
+                    "method pick requested invalid refinement forgetting {target} -> {refinement_target}: {conversion:?}"
+                ),
+            }
+            target = refinement_target;
+            adjustments.push(Adjustment { kind: Adjust::RefinementForget, target });
+        }
+
         self.register_predicates(autoderef.into_obligations());
 
         (target, adjustments)

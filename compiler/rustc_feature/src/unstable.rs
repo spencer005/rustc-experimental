@@ -710,6 +710,8 @@ declare_features! (
     (incomplete, ref_pat_eat_one_layer_2024, "1.79.0", Some(123076)),
     /// Makes `&` and `&mut` patterns eat only one layer of references in Rust 2024—structural variant
     (incomplete, ref_pat_eat_one_layer_2024_structural, "1.81.0", Some(123076)),
+    /// Allows indexed enums with exact constructor refinements.
+    (incomplete, refined_enums, "CURRENT_RUSTC_VERSION", None),
     /// Allows using the `#[register_tool]` attribute.
     (unstable, register_tool, "1.41.0", Some(66079)),
     /// Allows bounding the return type of AFIT/RPITIT.

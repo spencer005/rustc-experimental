@@ -16,8 +16,8 @@ use crate::mir::{BinOp, Mutability, Place, ProjectionElem, RawPtrKind, Safety, U
 use crate::ty::{
     Abi, AdtDef, Asyncness, Binder, BoundRegionKind, BoundTyKind, BoundVariableKind, ClosureKind,
     Constness, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef, FloatTy, FnSig,
-    GenericArgKind, GenericArgs, IntTy, MirConst, Movability, Pattern, Region, RigidTy, Span,
-    TermKind, TraitRef, Ty, TyConst, UintTy, VariantDef, VariantIdx,
+    GenericArgKind, GenericArgs, IntTy, MirConst, Movability, Pattern, Refinement, Region, RigidTy,
+    Span, TermKind, TraitRef, Ty, TyConst, UintTy, VariantDef, VariantIdx,
 };
 use crate::unstable::{InternalCx, RustcInternal};
 use crate::{CrateItem, CrateNum, DefId, IndexedVal};
@@ -135,6 +135,25 @@ impl RustcInternal for Pattern {
         })
     }
 }
+impl RustcInternal for Refinement {
+    type T<'tcx> = rustc_ty::RefinementTypeKey<'tcx>;
+
+    fn internal<'tcx>(
+        &self,
+        tables: &mut Tables<'_, BridgeTys>,
+        tcx: impl InternalCx<'tcx>,
+    ) -> Self::T<'tcx> {
+        match self {
+            Refinement::Pattern(pattern) => {
+                tcx.refinement_for_pattern(pattern.internal(tables, tcx))
+            }
+            Refinement::Constructor(variant) => {
+                tcx.refinement_for_constructor(variant.internal(tables, tcx).def_id)
+            }
+        }
+    }
+}
+
 
 impl RustcInternal for RigidTy {
     type T<'tcx> = rustc_ty::TyKind<'tcx>;
@@ -154,9 +173,11 @@ impl RustcInternal for RigidTy {
             RigidTy::Array(ty, cnst) => {
                 rustc_ty::TyKind::Array(ty.internal(tables, tcx), cnst.internal(tables, tcx))
             }
-            RigidTy::Pat(ty, pat) => {
-                rustc_ty::TyKind::Pat(ty.internal(tables, tcx), pat.internal(tables, tcx))
-            }
+            RigidTy::Refined(ty, refinement) => rustc_ty::TyKind::Refined(
+                ty.internal(tables, tcx),
+                refinement.internal(tables, tcx),
+            ),
+
             RigidTy::Adt(def, args) => {
                 rustc_ty::TyKind::Adt(def.internal(tables, tcx), args.internal(tables, tcx))
             }

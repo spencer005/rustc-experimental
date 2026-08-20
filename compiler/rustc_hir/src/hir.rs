@@ -4053,6 +4053,19 @@ pub struct ModSpans {
     pub inject_use_span: Span,
 }
 
+
+#[derive(Debug, Clone, Copy, StableHash)]
+pub enum VariantResult<'hir> {
+    Default,
+    Explicit(&'hir Ty<'hir>),
+}
+
+#[derive(Debug, Clone, Copy, StableHash)]
+pub enum VariantSchemeSyntax<'hir> {
+    Ordinary,
+    Refined { generics: &'hir Generics<'hir>, result: VariantResult<'hir> },
+}
+
 #[derive(Debug, Clone, Copy, StableHash)]
 pub struct EnumDef<'hir> {
     pub variants: &'hir [Variant<'hir>],
@@ -4068,6 +4081,7 @@ pub struct Variant<'hir> {
     pub def_id: LocalDefId,
     /// Fields and constructor id of the variant.
     pub data: VariantData<'hir>,
+    pub scheme: VariantSchemeSyntax<'hir>,
     /// Explicit discriminant (e.g., `Foo = 1`).
     pub disr_expr: Option<&'hir AnonConst>,
     /// Span
@@ -5055,6 +5069,10 @@ impl<'hir> Node<'hir> {
             | Node::TraitItem(TraitItem { generics, .. })
             | Node::ImplItem(ImplItem { generics, .. }) => Some(generics),
             Node::Item(item) => item.kind.generics(),
+            Node::Variant(Variant {
+                scheme: VariantSchemeSyntax::Refined { generics, .. },
+                ..
+            }) => Some(generics),
             _ => None,
         }
     }

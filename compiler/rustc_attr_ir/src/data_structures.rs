@@ -1079,6 +1079,9 @@ pub enum AttributeKind {
     /// Implementation detail of `#[eii]`
     EiiImpl(Box<EiiImpl>),
 
+    /// Represents `#[exact_variants]`.
+    ExactVariants(Span),
+
     /// Represents [`#[export_name]`](https://doc.rust-lang.org/reference/abi.html#the-export_name-attribute).
     ExportName {
         /// The name to export this item with.

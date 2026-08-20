@@ -1375,8 +1375,10 @@ impl<'diag, 'tcx> MirBorrowckCtxt<'_, 'diag, 'tcx> {
         } else if let ty::Adt(def, args) = ty.kind()
             && let Some(local_did) = def.did().as_local()
             && def.variants().iter().all(|variant| {
-                variant.fields.iter().all(|field| {
-                    self.implements_clone(field.ty(self.infcx.tcx, args).skip_norm_wip())
+                variant.fields.indices().all(|field| {
+                    variant
+                        .field_ty(self.infcx.tcx, field, args)
+                        .is_ok_and(|ty| self.implements_clone(ty.skip_norm_wip()))
                 })
             })
         {

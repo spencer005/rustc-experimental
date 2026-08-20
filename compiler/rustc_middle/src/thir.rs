@@ -351,6 +351,15 @@ pub enum ExprKind<'tcx> {
     NeverToAny {
         source: ExprId,
     },
+    /// A constructor-evidence conversion from an enum family value to its exact variant type.
+    RefinementConstruct {
+        source: ExprId,
+    },
+
+    /// A representation-preserving conversion that forgets an exact constructor refinement.
+    RefinementForget {
+        source: ExprId,
+    },
     /// A pointer coercion. More information can be found in [`PointerCoercion`].
     /// Pointer casts that cannot be done by coercions are represented by [`ExprKind::Cast`].
     PointerCoercion {

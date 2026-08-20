@@ -121,7 +121,7 @@ fn lit_to_mir_constant<'tcx>(tcx: TyCtxt<'tcx>, lit_input: LitToConstInput<'tcx>
     }
 
     let lit_ty = match *ty.kind() {
-        ty::Pat(base, _) => base,
+        ty::Refined(base, _) => base,
         _ => ty,
     };
 

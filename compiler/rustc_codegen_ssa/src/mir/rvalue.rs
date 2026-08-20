@@ -182,7 +182,10 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
             }
 
             mir::Rvalue::Cast(
-                mir::CastKind::Transmute | mir::CastKind::Subtype,
+                mir::CastKind::Transmute
+                | mir::CastKind::Subtype
+                | mir::CastKind::RefinementConstruct
+                | mir::CastKind::RefinementForget,
                 ref operand,
                 _ty,
             ) => {
@@ -619,7 +622,12 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                             bug!("Unsupported cast of {operand:?} to {cast:?}");
                         })
                     }
-                    mir::CastKind::Transmute | mir::CastKind::BoxDerefTransmute | mir::CastKind::Subtype => {
+                    mir::CastKind::Transmute
+                    | mir::CastKind::BoxDerefTransmute
+                    | mir::CastKind::Subtype
+                    | mir::CastKind::RefinementConstruct
+
+                    | mir::CastKind::RefinementForget => {
                         self.codegen_transmute_operand(bx, operand, cast)
                     }
                 };

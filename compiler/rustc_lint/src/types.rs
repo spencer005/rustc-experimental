@@ -749,9 +749,14 @@ fn ty_is_known_nonnull<'tcx>(
                 |field| ty_is_known_nonnull(tcx, typing_env, field.ty(tcx, args).skip_norm_wip()),
             )
         }
-        ty::Pat(base, pat) => {
+        ty::Refined(base, refinement) => {
             ty_is_known_nonnull(tcx, typing_env, *base)
-                || pat_ty_is_known_nonnull(tcx, typing_env, *pat)
+                || match tcx.refinement_type_invariant(*refinement) {
+                    ty::RefinementTypeInvariant::ScalarPattern(pattern) => {
+                        pat_ty_is_known_nonnull(tcx, typing_env, pattern)
+                    }
+                    ty::RefinementTypeInvariant::ExactConstructor(_) => false,
+                }
         }
         _ => false,
     }
@@ -808,7 +813,7 @@ fn get_nullable_type<'tcx>(
             };
             return get_nullable_type(tcx, typing_env, inner_field_ty);
         }
-        ty::Pat(base, ..) => return get_nullable_type(tcx, typing_env, base),
+        ty::Refined(base, ..) => return get_nullable_type(tcx, typing_env, base),
         ty::Int(_) | ty::Uint(_) | ty::Char | ty::RawPtr(..) => ty,
         // As these types are always non-null, the nullable equivalent of
         // `Option<T>` of these types are their raw pointer counterparts.
@@ -927,7 +932,14 @@ pub(crate) fn repr_nullable_ptr<'tcx>(
             }
             None
         }
-        ty::Pat(base, pat) => get_nullable_type_from_pat(tcx, typing_env, *base, *pat),
+        ty::Refined(base, refinement) => match tcx.refinement_type_invariant(*refinement) {
+            ty::RefinementTypeInvariant::ScalarPattern(pattern) => {
+                get_nullable_type_from_pat(tcx, typing_env, *base, pattern)
+            }
+            ty::RefinementTypeInvariant::ExactConstructor(_) => {
+                get_nullable_type(tcx, typing_env, *base)
+            }
+        },
         _ => None,
     }
 }

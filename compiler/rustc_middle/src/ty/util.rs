@@ -296,7 +296,7 @@ impl<'tcx> TyCtxt<'tcx> {
 
                 ty::Tuple(_) => break,
 
-                ty::Pat(inner, _) => {
+                ty::Refined(inner, _) => {
                     f();
                     ty = inner;
                 }
@@ -1202,7 +1202,7 @@ impl<'tcx> Ty<'tcx> {
             | ty::Error(_)
             | ty::FnPtr(..) => true,
             ty::Tuple(fields) => fields.iter().all(Self::is_trivially_freeze),
-            ty::Pat(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => ty.is_trivially_freeze(),
+            ty::Refined(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => ty.is_trivially_freeze(),
             ty::Adt(..)
             | ty::Bound(..)
             | ty::Closure(..)
@@ -1252,7 +1252,7 @@ impl<'tcx> Ty<'tcx> {
             | ty::Error(_)
             | ty::FnPtr(..) => true,
             ty::Tuple(fields) => fields.iter().all(Self::is_trivially_unpin),
-            ty::Pat(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => ty.is_trivially_unpin(),
+            ty::Refined(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => ty.is_trivially_unpin(),
             ty::Adt(..)
             | ty::Bound(..)
             | ty::Closure(..)
@@ -1305,7 +1305,7 @@ impl<'tcx> Ty<'tcx> {
             // FIXME(unsafe_binders):
             ty::UnsafeBinder(_) => unimplemented!(),
             ty::Tuple(fields) => fields.iter().all(Self::is_trivially_not_async_drop),
-            ty::Pat(elem_ty, _) | ty::Slice(elem_ty) | ty::Array(elem_ty, _) => {
+            ty::Refined(elem_ty, _) | ty::Slice(elem_ty) | ty::Array(elem_ty, _) => {
                 elem_ty.is_trivially_not_async_drop()
             }
             ty::Adt(..)
@@ -1463,7 +1463,7 @@ impl<'tcx> Ty<'tcx> {
             //
             // Because this function is "shallow", we return `true` for these composites regardless
             // of the type(s) contained within.
-            ty::Pat(..) | ty::Ref(..) | ty::Array(..) | ty::Slice(_) | ty::Tuple(..) => true,
+            ty::Refined(..) | ty::Ref(..) | ty::Array(..) | ty::Slice(_) | ty::Tuple(..) => true,
 
             // Raw pointers use bitwise comparison.
             ty::RawPtr(_, _) | ty::FnPtr(..) => true,
@@ -1560,7 +1560,7 @@ pub fn needs_drop_components_with_async<'tcx>(
             }
         }
 
-        ty::Pat(ty, _) | ty::Slice(ty) => needs_drop_components_with_async(tcx, ty, asyncness),
+        ty::Refined(ty, _) | ty::Slice(ty) => needs_drop_components_with_async(tcx, ty, asyncness),
         ty::Array(elem_ty, size) => {
             match needs_drop_components_with_async(tcx, elem_ty, asyncness) {
                 Ok(v) if v.is_empty() => Ok(v),

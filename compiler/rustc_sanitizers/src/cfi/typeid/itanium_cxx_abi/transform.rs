@@ -60,7 +60,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for TransformTy<'tcx> {
             | ty::FnDef(..)
             | ty::Foreign(..)
             | ty::Never
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Slice(..)
             | ty::Str
             | ty::Tuple(..)

@@ -66,7 +66,7 @@ where
             Ok(ty::Binder::dummy(vec![element_ty]))
         }
 
-        ty::Pat(element_ty, _) | ty::Array(element_ty, _) | ty::Slice(element_ty) => {
+        ty::Refined(element_ty, _) | ty::Array(element_ty, _) | ty::Slice(element_ty) => {
             Ok(ty::Binder::dummy(vec![element_ty]))
         }
 
@@ -143,7 +143,7 @@ where
         | ty::Coroutine(..)
         | ty::CoroutineWitness(..)
         | ty::Array(..)
-        | ty::Pat(..)
+        | ty::Refined(..)
         | ty::Closure(..)
         | ty::CoroutineClosure(..)
         | ty::Never
@@ -222,7 +222,7 @@ where
 
         // Cannot implement in core, as we can't be generic over patterns yet,
         // so we'd have to list all patterns and type combinations.
-        ty::Pat(ty, ..) => Ok(ty::Binder::dummy(vec![ty])),
+        ty::Refined(ty, ..) => Ok(ty::Binder::dummy(vec![ty])),
 
         ty::Dynamic(..)
         | ty::Str
@@ -403,7 +403,7 @@ pub(in crate::solve) fn extract_tupled_inputs_and_output_from_callable<I: Intern
         | ty::CoroutineWitness(..)
         | ty::Never
         | ty::Tuple(_)
-        | ty::Pat(_, _)
+        | ty::Refined(_, _)
         | ty::UnsafeBinder(_)
         | ty::Alias(ty::IsRigid::Yes, _)
         | ty::Param(_)
@@ -571,7 +571,7 @@ pub(in crate::solve) fn extract_tupled_inputs_and_output_from_async_callable<I: 
         | ty::Foreign(_)
         | ty::Str
         | ty::Array(_, _)
-        | ty::Pat(_, _)
+        | ty::Refined(_, _)
         | ty::Slice(_)
         | ty::RawPtr(_, _)
         | ty::Ref(_, _, _)
@@ -750,7 +750,7 @@ pub(in crate::solve) fn extract_fn_def_from_const_callable<I: Interner>(
         | ty::CoroutineWitness(..)
         | ty::Never
         | ty::Tuple(_)
-        | ty::Pat(_, _)
+        | ty::Refined(_, _)
         | ty::Alias(ty::IsRigid::Yes, _)
         | ty::Param(_)
         | ty::Placeholder(..)
@@ -802,7 +802,7 @@ pub(in crate::solve) fn const_conditions_for_destruct<I: Interner>(
             Ok(const_conditions)
         }
 
-        ty::Array(ty, _) | ty::Pat(ty, _) | ty::Slice(ty) => {
+        ty::Array(ty, _) | ty::Refined(ty, _) | ty::Slice(ty) => {
             Ok(vec![ty::TraitRef::new(cx, destruct_def_id, [ty])])
         }
 

@@ -127,13 +127,14 @@ impl<'a, 'tcx> ConstraintConversion<'a, 'tcx> {
         );
         debug!(?closure_mapping);
 
-        let region_edges = closure_requirements.outlives_requirements.iter().filter_map(|requirement| {
-            let sub = closure_mapping[requirement.outlived_free_region];
-            match requirement.subject {
-                ClosureOutlivesSubject::Region(region) => Some((closure_mapping[region], sub)),
-                ClosureOutlivesSubject::Ty(_) => None,
-            }
-        });
+        let region_edges =
+            closure_requirements.outlives_requirements.iter().filter_map(|requirement| {
+                let sub = closure_mapping[requirement.outlived_free_region];
+                match requirement.subject {
+                    ClosureOutlivesSubject::Region(region) => Some((closure_mapping[region], sub)),
+                    ClosureOutlivesSubject::Ty(_) => None,
+                }
+            });
         let static_outlives = self.static_outlives_regions(region_edges);
 
         // Create the predicates.
@@ -243,10 +244,7 @@ impl<'a, 'tcx> ConstraintConversion<'a, 'tcx> {
         let universal_regions = &self.universal_region_relations.universal_regions;
         let mut static_outlives = StaticOutlivesRegions { regions: SmallVec::new() };
         for region in universal_regions.universal_regions_iter() {
-            if self
-                .universal_region_relations
-                .outlives(region, universal_regions.fr_static)
-            {
+            if self.universal_region_relations.outlives(region, universal_regions.fr_static) {
                 static_outlives.insert(region);
             }
         }

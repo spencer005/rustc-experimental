@@ -1428,13 +1428,20 @@ pub fn walk_enum_def<'v, V: Visitor<'v>>(
 ) -> V::Result {
     let EnumDef { variants } = enum_definition;
     walk_list!(visitor, visit_variant, *variants);
+
     V::Result::output()
 }
 
 pub fn walk_variant<'v, V: Visitor<'v>>(visitor: &mut V, variant: &'v Variant<'v>) -> V::Result {
-    let Variant { ident, hir_id, def_id: _, data, disr_expr, span: _ } = variant;
+    let Variant { ident, hir_id, def_id: _, data, scheme, disr_expr, span: _ } = variant;
     try_visit!(visitor.visit_ident(*ident));
     try_visit!(visitor.visit_id(*hir_id));
+    if let VariantSchemeSyntax::Refined { generics, result } = scheme {
+        try_visit!(visitor.visit_generics(generics));
+        if let VariantResult::Explicit(ty) = result {
+            try_visit!(visitor.visit_ty_unambig(ty));
+        }
+    }
     try_visit!(visitor.visit_variant_data(data));
     visit_opt!(visitor, visit_anon_const, disr_expr);
     V::Result::output()

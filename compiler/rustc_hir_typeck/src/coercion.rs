@@ -42,6 +42,7 @@ use rustc_errors::{Applicability, Diag, struct_span_code_err};
 use rustc_hir as hir;
 use rustc_hir::attrs::InlineAttr;
 use rustc_hir::attrs::lang_items::LangItem;
+use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir_analysis::hir_ty_lowering::HirTyLowerer;
 use rustc_infer::infer::relate::RelateResult;
@@ -265,6 +266,33 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         // ultimately fall back to some form of subtyping.
         if a.is_ty_var() {
             return self.coerce_from_inference_variable(a, b);
+        }
+
+        if let Some(conversion) = self.tcx.refinement_conversion(a, b) {
+            return match conversion {
+                ty::RefinementConversion::Identity => {
+                    success(vec![], b, PredicateObligations::new())
+                }
+                ty::RefinementConversion::ForgetExactConstructor => success(
+                    vec![Adjustment { kind: Adjust::RefinementForget, target: b }],
+                    b,
+                    PredicateObligations::new(),
+                ),
+                ty::RefinementConversion::ForgetSharedExactConstructor { relation_source } => {
+                    self.unify_raw(relation_source, b, ForceLeakCheck::No).and_then(
+                        |InferOk { value: target, obligations }| {
+                            success(
+                                vec![Adjustment {
+                                    kind: Adjust::RefinementForget,
+                                    target,
+                                }],
+                                target,
+                                obligations,
+                            )
+                        },
+                    )
+                }
+            };
         }
 
         // Consider coercing the subtype to a DST
@@ -1127,6 +1155,33 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     }
 }
 
+fn constructor_variant_def_id<'tcx>(
+    fcx: &FnCtxt<'_, 'tcx>,
+    expr: &hir::Expr<'tcx>,
+) -> Option<DefId> {
+    let variant_from_res = |res: Res| match res {
+        Res::Def(DefKind::Ctor(CtorOf::Variant, _), ctor_def_id) => Some(fcx.tcx.parent(ctor_def_id)),
+        Res::Def(DefKind::Variant, variant_def_id) => Some(variant_def_id),
+        _ => None,
+    };
+
+    match expr.kind {
+        hir::ExprKind::Path(ref qpath) => {
+            variant_from_res(fcx.typeck_results.borrow().qpath_res(qpath, expr.hir_id))
+        }
+        hir::ExprKind::Call(callee, _) => match callee.kind {
+            hir::ExprKind::Path(ref qpath) => {
+                variant_from_res(fcx.typeck_results.borrow().qpath_res(qpath, callee.hir_id))
+            }
+            _ => None,
+        },
+        hir::ExprKind::Struct(ref qpath, ..) => {
+            variant_from_res(fcx.typeck_results.borrow().qpath_res(qpath, expr.hir_id))
+        }
+        _ => None,
+    }
+}
+
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Attempt to coerce an expression to a type, and return the
     /// adjusted type of the expression, if successful.
@@ -1142,6 +1197,28 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ) -> RelateResult<'tcx, Ty<'tcx>> {
         let source = self.resolve_vars_with_obligations(expr_ty);
         debug!("coercion::try({:?}: {:?} -> {:?})", expr, source, target);
+        if self.tcx.exact_constructor_type(source).is_none()
+            && let Some(target_exact) = self.tcx.exact_constructor_type(target)
+            && constructor_variant_def_id(self, expr) == Some(target_exact.variant_def_id)
+        {
+            let cause =
+                cause.unwrap_or_else(|| self.cause(expr.span, ObligationCauseCode::ExprAssignable));
+            let coerce = Coerce::new(
+                self,
+                cause,
+                allow_two_phase,
+                self.tcx.expr_guaranteed_to_constitute_read_for_never(expr),
+            );
+            let ok = self.commit_if_ok(|_| {
+                coerce.unify_raw(source, target_exact.base, ForceLeakCheck::No)
+            })?;
+            self.register_infer_ok_obligations(ok);
+            self.apply_adjustments(
+                expr,
+                vec![Adjustment { kind: Adjust::RefinementConstruct, target }],
+            );
+            return Ok(target);
+        }
 
         let cause =
             cause.unwrap_or_else(|| self.cause(expr.span, ObligationCauseCode::ExprAssignable));
@@ -1337,6 +1414,38 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // we do it even though it may mask bugs in the coercion logic.
         if prev_ty == new_ty {
             return Ok(prev_ty);
+        }
+
+        if let Some(join) = self.tcx.refinement_join(prev_ty, new_ty) {
+            if join.target != prev_ty || join.target != new_ty {
+                match join.left {
+                    ty::RefinementJoinConversion::Identity => {}
+                    ty::RefinementJoinConversion::ForgetExactConstructor => {
+                        for expr in exprs {
+                            self.apply_adjustments(
+                                expr,
+                                vec![Adjustment {
+                                    kind: Adjust::RefinementForget,
+                                    target: join.target,
+                                }],
+                            );
+                        }
+                    }
+                }
+                match join.right {
+                    ty::RefinementJoinConversion::Identity => {}
+                    ty::RefinementJoinConversion::ForgetExactConstructor => {
+                        self.apply_adjustments(
+                            new,
+                            vec![Adjustment {
+                                kind: Adjust::RefinementForget,
+                                target: join.target,
+                            }],
+                        );
+                    }
+                }
+                return Ok(join.target);
+            }
         }
 
         let terr = TypeError::Sorts(ty::error::ExpectedFound::new(prev_ty, new_ty));

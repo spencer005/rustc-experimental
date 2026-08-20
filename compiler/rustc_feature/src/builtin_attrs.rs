@@ -170,6 +170,8 @@ pub static BUILTIN_ATTRIBUTES: &[Symbol] = &[
 
     // Linking:
     sym::export_stable,
+    sym::exact_variants,
+
 
     // Testing:
     sym::test_runner,

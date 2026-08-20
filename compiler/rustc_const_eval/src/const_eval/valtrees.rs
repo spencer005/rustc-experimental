@@ -119,7 +119,7 @@ fn const_to_valtree_inner<'tcx>(
             Ok(ty::ValTree::from_scalar_int(tcx, val))
         }
 
-        ty::Pat(base, ..) => {
+        ty::Refined(base, ..) => {
             let mut place = place.clone();
             // The valtree of the base type is the same as the valtree of the pattern type.
             // Since the returned valtree does not contain the type or layout, we can just
@@ -312,7 +312,7 @@ pub fn valtree_to_const_value<'tcx>(
         ty::Bool | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Char | ty::RawPtr(_, _) => {
             mir::ConstValue::Scalar(Scalar::Int(cv.to_leaf()))
         }
-        ty::Pat(ty, _) => {
+        ty::Refined(ty, _) => {
             let cv = ty::Value { valtree: cv.valtree, ty };
             valtree_to_const_value(tcx, typing_env, cv)
         }

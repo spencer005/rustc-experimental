@@ -221,10 +221,8 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
             let tcx = self.tcx();
             let generics = tcx.generics_of(def_id);
             let mut replacements = Vec::new();
-            for (region, vid) in self
-                .universal_region_relations
-                .universal_regions
-                .named_universal_regions_iter()
+            for (region, vid) in
+                self.universal_region_relations.universal_regions.named_universal_regions_iter()
             {
                 let ty::ReEarlyParam(param) = region.kind() else { continue };
                 if matches!(

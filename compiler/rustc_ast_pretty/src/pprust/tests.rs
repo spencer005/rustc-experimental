@@ -53,6 +53,7 @@ fn test_variant_to_string() {
             attrs: ast::AttrVec::new(),
             id: ast::DUMMY_NODE_ID,
             data: ast::VariantData::Unit(ast::DUMMY_NODE_ID),
+            scheme: ast::VariantSchemeSyntax::Ordinary,
             disr_expr: None,
             span: DUMMY_SP,
             is_placeholder: false,

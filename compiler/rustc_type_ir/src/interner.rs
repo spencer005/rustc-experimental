@@ -157,6 +157,15 @@ pub trait Interner:
     type ErrorGuaranteed: Copy + Debug + Hash + Eq;
     type BoundExistentialPredicates: BoundExistentialPredicates<Self>;
     type AllocId: Copy + Debug + Hash + Eq;
+    type RefinementTypeKey: Copy
+        + Debug
+        + Hash
+        + Eq
+        + Relate<Self>
+        + Flags
+        + TypeFoldable<Self>
+        + TypeVisitable<Self>
+        + IntoKind<Kind = ty::RefinementDefinition<Self>>;
     type Pat: Copy
         + Debug
         + Hash

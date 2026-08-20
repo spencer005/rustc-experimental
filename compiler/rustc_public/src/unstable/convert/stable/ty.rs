@@ -8,7 +8,8 @@ use rustc_public_bridge::context::CompilerCtxt;
 use crate::alloc;
 use crate::compiler_interface::BridgeTys;
 use crate::ty::{
-    AdtKind, FloatTy, GenericArgs, GenericParamDef, IntTy, Region, RigidTy, TyKind, UintTy,
+    AdtKind, FloatTy, GenericArgs, GenericParamDef, IntTy, Refinement, Region, RigidTy, TyKind,
+    UintTy, VariantDef,
 };
 use crate::unstable::Stable;
 
@@ -446,9 +447,10 @@ impl<'tcx> Stable<'tcx> for ty::TyKind<'tcx> {
             ty::Array(ty, constant) => {
                 TyKind::RigidTy(RigidTy::Array(ty.stable(tables, cx), constant.stable(tables, cx)))
             }
-            ty::Pat(ty, pat) => {
-                TyKind::RigidTy(RigidTy::Pat(ty.stable(tables, cx), pat.stable(tables, cx)))
-            }
+            ty::Refined(ty, refinement) => TyKind::RigidTy(RigidTy::Refined(
+                ty.stable(tables, cx),
+                refinement.stable(tables, cx),
+            )),
             ty::Slice(ty) => TyKind::RigidTy(RigidTy::Slice(ty.stable(tables, cx))),
             ty::RawPtr(ty, mutbl) => {
                 TyKind::RigidTy(RigidTy::RawPtr(ty.stable(tables, cx), mutbl.stable(tables, cx)))
@@ -505,6 +507,32 @@ impl<'tcx> Stable<'tcx> for ty::TyKind<'tcx> {
             )),
             ty::Placeholder(..) | ty::Infer(_) | ty::Error(_) => {
                 unreachable!();
+            }
+        }
+    }
+}
+
+impl<'tcx> Stable<'tcx> for ty::RefinementTypeKey<'tcx> {
+    type T = Refinement;
+
+    fn stable<'cx>(
+        &self,
+        tables: &mut Tables<'cx, BridgeTys>,
+        cx: &CompilerCtxt<'cx, BridgeTys>,
+    ) -> Self::T {
+        let refinement = cx.tcx.lift(*self);
+        match cx.tcx.refinement_type_identity(refinement) {
+            ty::RefinementTypeIdentity::Pattern(pattern) => {
+                Refinement::Pattern(pattern.stable(tables, cx))
+            }
+            ty::RefinementTypeIdentity::Constructor(variant_def_id) => {
+                let family_def_id = cx.tcx.parent(variant_def_id);
+                let adt_def = cx.tcx.adt_def(family_def_id);
+                let idx = adt_def.variant_index_with_id(variant_def_id).stable(tables, cx);
+                Refinement::Constructor(VariantDef {
+                    idx,
+                    adt_def: tables.adt_def(family_def_id),
+                })
             }
         }
     }

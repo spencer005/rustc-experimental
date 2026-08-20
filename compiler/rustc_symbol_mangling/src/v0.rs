@@ -324,6 +324,22 @@ impl<'tcx> V0SymbolMangler<'tcx> {
             }
         })
     }
+    fn print_refinement_identity(
+        &mut self,
+        refinement: ty::RefinementTypeKey<'tcx>,
+    ) -> Result<(), std::fmt::Error> {
+        match self.tcx.refinement_type_identity(refinement) {
+            ty::RefinementTypeIdentity::Pattern(pattern) => {
+                self.push("p");
+                self.print_pat(pattern)
+            }
+            ty::RefinementTypeIdentity::Constructor(variant_def_id) => {
+                self.push("v");
+                self.print_def_path(variant_def_id, &[])
+            }
+        }
+    }
+
 }
 
 impl<'tcx> Printer<'tcx> for V0SymbolMangler<'tcx> {
@@ -556,10 +572,10 @@ impl<'tcx> Printer<'tcx> for V0SymbolMangler<'tcx> {
                 ty.print(self)?;
             }
 
-            ty::Pat(ty, pat) => {
+            ty::Refined(ty, refinement) => {
                 self.push("W");
                 ty.print(self)?;
-                self.print_pat(pat)?;
+                self.print_refinement_identity(refinement)?;
             }
 
             ty::Array(ty, len) => {

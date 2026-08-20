@@ -66,6 +66,9 @@ impl Category {
             | ExprKind::Binary { .. }
             | ExprKind::Cast { .. }
             | ExprKind::PointerCoercion { .. }
+            | ExprKind::RefinementConstruct { .. }
+
+            | ExprKind::RefinementForget { .. }
             | ExprKind::Repeat { .. }
             | ExprKind::Assign { .. }
             | ExprKind::AssignOp { .. }

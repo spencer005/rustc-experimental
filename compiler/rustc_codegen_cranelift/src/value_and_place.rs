@@ -338,7 +338,7 @@ impl<'tcx> CValue<'tcx> {
     }
 
     pub(crate) fn cast_pat_ty_to_base(self, layout: TyAndLayout<'tcx>) -> Self {
-        let ty::Pat(base, _) = *self.layout().ty.kind() else {
+        let ty::Refined(base, _) = *self.layout().ty.kind() else {
             panic!("not a pattern type: {:#?}", self.layout())
         };
         assert_eq!(layout.ty, base);

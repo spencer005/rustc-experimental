@@ -199,7 +199,8 @@ impl SelfTyHead {
             | ty::FnDef(..)
             | ty::FnPtr(..)
             | ty::Tuple(_) => Self::Primitive,
-            ty::Pat(ty, _) => Self::of(bound_ty.rebind(ty), tcx, parent),
+            ty::Refined(ty, _) => Self::of(bound_ty.rebind(ty), tcx, parent),
+
             ty::Ref(_, ty, _) => match Self::of(bound_ty.rebind(ty), tcx, parent) {
                 Self::Generic => Self::Primitive,
                 head => head,

@@ -604,6 +604,8 @@ macro_rules! common_visitor_and_walkers {
                 fn visit_ty(Ty);
                 fn visit_use_tree(UseTree);
                 fn visit_variant_data(VariantData);
+                fn visit_variant_result(VariantResult);
+                fn visit_variant_scheme_syntax(VariantSchemeSyntax);
                 fn visit_variant(Variant);
                 fn visit_vis(Visibility);
                 fn visit_where_predicate_kind(WherePredicateKind);
@@ -1132,6 +1134,8 @@ macro_rules! common_visitor_and_walkers {
             pub fn walk_ty(Ty);
             pub fn walk_use_tree(UseTree);
             pub fn walk_variant_data(VariantData);
+            pub fn walk_variant_result(VariantResult);
+            pub fn walk_variant_scheme_syntax(VariantSchemeSyntax);
             pub fn walk_variant(Variant);
             pub fn walk_vis(Visibility);
             pub fn walk_where_predicate_kind(WherePredicateKind);

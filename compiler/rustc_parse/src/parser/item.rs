@@ -1868,6 +1868,14 @@ impl<'a> Parser<'a> {
                 return Ok((None, Trailing::No, UsePreAttrPos::No));
             }
             let ident = this.parse_field_ident("enum", vlo)?;
+            let has_local_generics = this.check(exp!(Lt));
+            let generics_lo = this.token.span;
+            let local_generics = this.parse_generics()?;
+            if has_local_generics {
+                this.psess
+                    .gated_spans
+                    .gate(sym::refined_enums, generics_lo.to(this.prev_token.span));
+            }
 
             if this.token == token::Bang {
                 if let Err(err) = this.unexpected() {
@@ -1920,6 +1928,20 @@ impl<'a> Parser<'a> {
                 VariantData::Unit(DUMMY_NODE_ID)
             };
 
+            let result = if this.eat(exp!(RArrow)) {
+                this.psess.gated_spans.gate(sym::refined_enums, this.prev_token.span);
+                VariantResult::Explicit(this.parse_ty()?)
+            } else {
+                VariantResult::Default
+            };
+
+            let scheme = if has_local_generics || matches!(result, VariantResult::Explicit(_)) {
+                VariantSchemeSyntax::Refined { generics: local_generics, result }
+            } else {
+                VariantSchemeSyntax::Ordinary
+            };
+
+
             let disr_expr =
                 if this.eat(exp!(Eq)) { Some(this.parse_expr_anon_const()?) } else { None };
 
@@ -1933,6 +1955,7 @@ impl<'a> Parser<'a> {
                 id: DUMMY_NODE_ID,
                 attrs: variant_attrs,
                 data: struct_def,
+                scheme,
                 disr_expr,
                 span,
                 is_placeholder: false,

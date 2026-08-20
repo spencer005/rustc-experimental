@@ -54,6 +54,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         op: &impl Projectable<'tcx, M::Provenance>,
     ) -> InterpResult<'tcx, VariantIdx> {
         let ty = op.layout().ty;
+        let representation_ty = self.tcx.exact_constructor_type(ty).map_or(ty, |exact| exact.base);
         trace!("read_discriminant_value {:#?}", op.layout());
         // Get type and layout of the discriminant.
         let discr_layout = self.layout_of(ty.discriminant_ty(*self.tcx))?;
@@ -124,7 +125,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 // Convert discriminant to variant index. The tag may pass the layout range
                 // check above but still not match any actual variant discriminant (e.g.,
                 // non-contiguous discriminants with a wrapping valid_range).
-                let index = match *ty.kind() {
+                let index = match *representation_ty.kind() {
                     ty::Adt(adt, _) => {
                         adt.discriminants(*self.tcx).find(|(_, var)| var.val == discr_bits)
                     }
@@ -178,8 +179,10 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                                     .checked_add(variant_index_relative)
                                     .expect("overflow computing absolute variant idx"),
                             );
-                            let variants =
-                                ty.ty_adt_def().expect("tagged layout for non adt").variants();
+                            let variants = representation_ty
+                                .ty_adt_def()
+                                .expect("tagged layout for non adt")
+                                .variants();
                             assert!(variant_index < variants.next_index());
                             // This should imply that the tag is in its layout range.
                             assert!(tag_scalar_layout.valid_range(self).contains(tag_bits));

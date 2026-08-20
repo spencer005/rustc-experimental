@@ -113,6 +113,13 @@ pub enum Pattern {
     NotNull,
     Or(Vec<Pattern>),
 }
+/// Opaque refinement identity attached to a base type.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub enum Refinement {
+    Pattern(Pattern),
+    Constructor(VariantDef),
+}
+
 
 /// Represents a constant in the type system
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
@@ -567,7 +574,8 @@ pub enum RigidTy {
     Foreign(ForeignDef),
     Str,
     Array(Ty, TyConst),
-    Pat(Ty, Pattern),
+    Refined(Ty, Refinement),
+
     Slice(Ty),
     RawPtr(Ty, Mutability),
     Ref(Region, Ty, Mutability),

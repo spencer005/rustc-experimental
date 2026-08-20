@@ -209,6 +209,13 @@ impl<'tcx> ThirBuildCx<'tcx> {
             }
             Adjust::NeverToAny if adjustment.target.is_never() => return expr,
             Adjust::NeverToAny => ExprKind::NeverToAny { source: self.thir.exprs.push(expr) },
+            Adjust::RefinementConstruct => {
+                ExprKind::RefinementConstruct { source: self.thir.exprs.push(expr) }
+            }
+
+            Adjust::RefinementForget => {
+                ExprKind::RefinementForget { source: self.thir.exprs.push(expr) }
+            }
             Adjust::Deref(DerefAdjustKind::Builtin) => {
                 adjust_span(&mut expr);
                 ExprKind::Deref { arg: self.thir.exprs.push(expr) }
@@ -334,7 +341,8 @@ impl<'tcx> ThirBuildCx<'tcx> {
         } else if let hir::ExprKind::Path(ref qpath) = source.kind
             && let res = self.typeck_results.qpath_res(qpath, source.hir_id)
             && let ty = self.typeck_results.node_type(source.hir_id)
-            && let ty::Adt(adt_def, args) = ty.kind()
+            && let family_ty = self.tcx.exact_constructor_type(ty).map_or(ty, |exact| exact.base)
+            && let ty::Adt(adt_def, args) = family_ty.kind()
             && let Res::Def(DefKind::Ctor(CtorOf::Variant, CtorKind::Const), variant_ctor_id) = res
         {
             // Check whether this is casting an enum variant discriminant.
@@ -494,7 +502,13 @@ impl<'tcx> ThirBuildCx<'tcx> {
                         None
                     };
                     if let Some((adt_def, index)) = adt_data {
-                        let node_args = self.typeck_results.node_args(fun.hir_id);
+                        let family_ty = self
+                            .tcx
+                            .exact_constructor_type(expr_ty)
+                            .map_or(expr_ty, |exact| exact.base);
+                        let ty::Adt(_, adt_args) = *family_ty.kind() else {
+                            bug!("tuple-like ADT expression did not have an ADT family result type")
+                        };
                         let user_provided_types = self.typeck_results.user_provided_types();
                         let user_ty =
                             user_provided_types.get(fun.hir_id).copied().map(|mut u_ty| {
@@ -515,7 +529,7 @@ impl<'tcx> ThirBuildCx<'tcx> {
                             .collect();
                         ExprKind::Adt(Box::new(AdtExpr {
                             adt_def,
-                            args: node_args,
+                            args: adt_args,
                             variant_index: index,
                             fields: field_refs,
                             user_ty,
@@ -687,7 +701,12 @@ impl<'tcx> ThirBuildCx<'tcx> {
                 }
             }
 
-            hir::ExprKind::Struct(qpath, fields, ref base) => match expr_ty.kind() {
+            hir::ExprKind::Struct(qpath, fields, ref base) => match self
+                .tcx
+                .exact_constructor_type(expr_ty)
+                .map_or(expr_ty, |exact| exact.base)
+                .kind()
+            {
                 ty::Adt(adt, args) => match adt.adt_kind() {
                     AdtKind::Struct | AdtKind::Union => {
                         let user_provided_types = self.typeck_results.user_provided_types();
@@ -1463,7 +1482,8 @@ impl<'tcx> ThirBuildCx<'tcx> {
                 let user_ty = user_provided_types.get(expr.hir_id).copied().map(Box::new);
                 debug!("convert_path_expr: user_ty={:?}", user_ty);
                 let ty = self.typeck_results.node_type(expr.hir_id);
-                match ty.kind() {
+                let family_ty = self.tcx.exact_constructor_type(ty).map_or(ty, |exact| exact.base);
+                match family_ty.kind() {
                     // A unit struct/variant which is used as a value.
                     // We return a completely different ExprKind here to account for this special case.
                     ty::Adt(adt_def, args) => ExprKind::Adt(Box::new(AdtExpr {

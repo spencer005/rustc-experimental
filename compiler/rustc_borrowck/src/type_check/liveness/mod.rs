@@ -50,11 +50,8 @@ pub(super) fn generate<'tcx>(
             compute_relevant_live_locals(typeck.tcx(), &free_regions, typeck.body);
         typeck.polonius_context.as_mut().unwrap().boring_nll_locals =
             boring_locals.into_iter().collect();
-        free_regions = typeck
-            .universal_region_relations
-            .universal_regions
-            .universal_regions_iter()
-            .collect();
+        free_regions =
+            typeck.universal_region_relations.universal_regions.universal_regions_iter().collect();
     }
     let (relevant_live_locals, boring_locals) =
         compute_relevant_live_locals(typeck.tcx(), &free_regions, typeck.body);

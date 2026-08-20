@@ -292,10 +292,13 @@ impl LowerTypeRelativePathMode {
     }
 }
 
-/// Whether to permit a path to resolve to an enum variant.
-#[derive(Debug, Clone, Copy)]
+/// Whether and how to permit a path to resolve to an enum variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermitVariants {
+    /// Permit any enum variant while lowering a struct expression path.
     Yes,
+    /// Permit enum variants as exact constructor types.
+    ExactType,
     No,
 }
 
@@ -478,6 +481,21 @@ impl<'tcx> ty::TypeFolder<TyCtxt<'tcx>> for ForbidParamUsesFolder<'tcx> {
 }
 
 impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
+    fn early_param_index(&self, param_def_id: DefId) -> u32 {
+        let tcx = self.tcx();
+        let mut scope = Some(self.item_def_id().to_def_id());
+        while let Some(def_id) = scope {
+            let generics = tcx.generics_of(def_id);
+            if let Some(index) = generics.param_def_id_to_index(tcx, param_def_id) {
+                return index;
+            }
+            scope = tcx.opt_parent(def_id);
+        }
+
+        let owner = tcx.hir_ty_param_owner(param_def_id.expect_local());
+        tcx.generics_of(owner).param_def_id_to_index[&param_def_id]
+    }
+
     /// See `check_param_uses_if_mcg`.
     ///
     /// FIXME(mgca): this is pub only for instantiate_value_path and would be nice to avoid altogether
@@ -601,9 +619,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
 
             rbv::ResolvedArg::EarlyBound(def_id) => {
                 let name = tcx.hir_ty_param_name(def_id);
-                let item_def_id = tcx.hir_ty_param_owner(def_id);
-                let generics = tcx.generics_of(item_def_id);
-                let index = generics.param_def_id_to_index[&def_id.to_def_id()];
+                let index = self.early_param_index(def_id.to_def_id());
                 ty::Region::new_early_param(tcx, ty::EarlyParamRegion { index, name })
             }
 
@@ -1392,9 +1408,8 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
 
     /// Lower a [type-relative](hir::QPath::TypeRelative) path in type position to a type.
     ///
-    /// If the path refers to an enum variant and `permit_variants` holds,
-    /// the returned type is simply the provided self type `qself_ty`.
-    ///
+    /// If the path refers to an enum variant, `permit_variants` determines whether the variant is
+    /// accepted and whether it is lowered as the base enum or an exact constructor refinement.
     /// A path like `A::B::C::D` is understood as `<A::B::C>::D`. I.e.,
     /// `qself_ty` / `qself` is `A::B::C` and `assoc_segment` is `D`.
     /// We return the lowered type and the `DefId` for the whole path.
@@ -1448,7 +1463,12 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
             }
             TypeRelativePath::Variant { adt, variant_did } => {
                 let adt = self.check_param_uses_if_mcg(adt, span, false);
-                Ok((adt, DefKind::Variant, variant_did))
+                let ty = match permit_variants {
+                    PermitVariants::Yes => adt,
+                    PermitVariants::ExactType => tcx.exact_variant_ty(adt, variant_did),
+                    PermitVariants::No => bug!("variant returned when variants are not permitted"),
+                };
+                Ok((ty, DefKind::Variant, variant_did))
             }
             TypeRelativePath::Ctor { .. } => {
                 let e = tcx.dcx().span_err(span, "expected type, found tuple constructor");
@@ -1543,22 +1563,40 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                         let ty::Adt(_, enum_args) = self_ty.kind() else { unreachable!() };
                         return Ok(TypeRelativePath::Ctor { ctor_def_id, args: enum_args });
                     }
-                    if let PermitVariants::Yes = mode.permit_variants() {
-                        tcx.check_stability(variant_def.def_id, Some(qpath_hir_id), span, None);
-                        let _ = self.prohibit_generic_args(
-                            slice::from_ref(segment).iter(),
-                            GenericsArgsErrExtend::EnumVariant {
-                                qself: hir_self_ty,
-                                assoc_segment: segment,
-                                adt_def,
-                            },
-                        );
-                        return Ok(TypeRelativePath::Variant {
-                            adt: self_ty,
-                            variant_did: variant_def.def_id,
-                        });
-                    } else {
-                        variant_def_id = Some(variant_def.def_id);
+                    match mode.permit_variants() {
+                        PermitVariants::Yes => {
+                            tcx.check_stability(variant_def.def_id, Some(qpath_hir_id), span, None);
+                            let _ = self.prohibit_generic_args(
+                                slice::from_ref(segment).iter(),
+                                GenericsArgsErrExtend::EnumVariant {
+                                    qself: hir_self_ty,
+                                    assoc_segment: segment,
+                                    adt_def,
+                                },
+                            );
+                            return Ok(TypeRelativePath::Variant {
+                                adt: self_ty,
+                                variant_did: variant_def.def_id,
+                            });
+                        }
+                        PermitVariants::ExactType => {
+                            tcx.check_stability(variant_def.def_id, Some(qpath_hir_id), span, None);
+                            let _ = self.prohibit_generic_args(
+                                slice::from_ref(segment).iter(),
+                                GenericsArgsErrExtend::EnumVariant {
+                                    qself: hir_self_ty,
+                                    assoc_segment: segment,
+                                    adt_def,
+                                },
+                            );
+                            return Ok(TypeRelativePath::Variant {
+                                adt: self_ty,
+                                variant_did: variant_def.def_id,
+                            });
+                        }
+                        PermitVariants::No => {
+                            variant_def_id = Some(variant_def.def_id);
+                        }
                     }
                 }
             }
@@ -2103,6 +2141,27 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
 
             // Case 2. Reference to a variant constructor.
             DefKind::Ctor(CtorOf::Variant, ..) | DefKind::Variant => {
+                let variant_def_id = match kind {
+                    DefKind::Ctor(CtorOf::Variant, ..) => tcx.parent(def_id),
+                    DefKind::Variant => def_id,
+                    _ => unreachable!(),
+                };
+                if matches!(tcx.variant_scheme(variant_def_id), ty::VariantScheme::Refined(_)) {
+                    let family_def_id = tcx.parent(variant_def_id);
+                    if self_ty.is_none()
+                        && let Some((family_index, _)) = segments
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .find(|(_, segment)| {
+                                segment.res == Res::Def(DefKind::Enum, family_def_id)
+                            })
+                    {
+                        generic_segments.push(GenericPathSegment(family_def_id, family_index));
+                    }
+                    generic_segments.push(GenericPathSegment(variant_def_id, last));
+                    return generic_segments;
+                }
                 let (generics_def_id, index) = if let Some(self_ty) = self_ty {
                     // We have something like `<module::Enum>::Variant`.
 
@@ -2219,11 +2278,48 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 self.lower_path_segment(span, did, segment)
             }
             Res::Def(kind @ DefKind::Variant, def_id)
-                if let PermitVariants::Yes = permit_variants =>
+                if permit_variants != PermitVariants::No =>
             {
-                // Lower "variant type" as if it were a real type.
-                // The resulting `Ty` is type of the variant's enum for now.
                 assert_eq!(opt_self_ty, None);
+
+                if permit_variants == PermitVariants::ExactType {
+                    let family_def_id = tcx.parent(def_id);
+                    if tcx.def_kind(family_def_id) != DefKind::Enum {
+                        bug!("variant {def_id:?} did not have an enum parent");
+                    }
+                    let family_index = path.segments.iter().position(|segment| {
+                        segment.res == Res::Def(DefKind::Enum, family_def_id)
+                    });
+                    let Some(family_index) = family_index else {
+                        let mut diag = tcx.dcx().struct_span_err(
+                            span,
+                            "an exact constructor type must name its owning enum family",
+                        );
+                        diag.note(format!(
+                            "`{}` is a constructor of `{}`",
+                            tcx.item_name(def_id),
+                            tcx.def_path_str(family_def_id)
+                        ));
+                        diag.help(format!(
+                            "write `{}<...>::{}` with the family arguments required by this type",
+                            tcx.item_name(family_def_id),
+                            tcx.item_name(def_id)
+                        ));
+                        return Ty::new_error(tcx, diag.emit());
+                    };
+                    let _ = self.prohibit_generic_args(
+                        path.segments.iter().enumerate().filter_map(|(index, segment)| {
+                            if index == family_index { None } else { Some(segment) }
+                        }),
+                        GenericsArgsErrExtend::DefVariant(&path.segments),
+                    );
+                    let base = self.lower_path_segment(
+                        span,
+                        family_def_id,
+                        &path.segments[family_index],
+                    );
+                    return tcx.exact_variant_ty(base, def_id);
+                }
 
                 let generic_segments =
                     self.probe_generic_path_segments(path.segments, None, kind, def_id, span);
@@ -2341,9 +2437,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 Ty::new_bound(tcx, debruijn, br)
             }
             Some(rbv::ResolvedArg::EarlyBound(def_id)) => {
-                let item_def_id = tcx.hir_ty_param_owner(def_id);
-                let generics = tcx.generics_of(item_def_id);
-                let index = generics.param_def_id_to_index[&def_id.to_def_id()];
+                let index = self.early_param_index(def_id.to_def_id());
                 Ty::new_param(tcx, index, tcx.hir_ty_param_name(def_id))
             }
             Some(rbv::ResolvedArg::Error(guar)) => Ty::new_error(tcx, guar),
@@ -2361,11 +2455,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
 
         let ct = match tcx.named_bound_var(path_hir_id) {
             Some(rbv::ResolvedArg::EarlyBound(_)) => {
-                // Find the name and index of the const parameter by indexing the generics of
-                // the parent item and construct a `ParamConst`.
-                let item_def_id = tcx.parent(param_def_id);
-                let generics = tcx.generics_of(item_def_id);
-                let index = generics.param_def_id_to_index[&param_def_id];
+                let index = self.early_param_index(param_def_id);
                 let name = tcx.item_name(param_def_id);
                 ty::Const::new_param(tcx, ty::ParamConst::new(index, name))
             }
@@ -3224,7 +3314,18 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
             hir::TyKind::Path(hir::QPath::Resolved(maybe_qself, path)) => {
                 debug!(?maybe_qself, ?path);
                 let opt_self_ty = maybe_qself.as_ref().map(|qself| self.lower_ty(qself));
-                self.lower_resolved_ty_path(opt_self_ty, path, hir_ty.hir_id, PermitVariants::No)
+                let permit_variants = if tcx.features().refined_enums() {
+                    PermitVariants::ExactType
+                } else {
+                    PermitVariants::No
+                };
+                self.lower_resolved_ty_path(
+                    opt_self_ty,
+                    path,
+                    hir_ty.hir_id,
+                    permit_variants,
+
+                )
             }
             &hir::TyKind::OpaqueDef(opaque_ty) => {
                 // If this is an RPITIT and we are using the new RPITIT lowering scheme, we
@@ -3374,13 +3475,18 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
             hir::TyKind::Path(hir::QPath::TypeRelative(hir_self_ty, segment)) => {
                 debug!(?hir_self_ty, ?segment);
                 let self_ty = self.lower_ty(hir_self_ty);
+                let permit_variants = if tcx.features().refined_enums() {
+                    PermitVariants::ExactType
+                } else {
+                    PermitVariants::No
+                };
                 self.lower_type_relative_ty_path(
                     self_ty,
                     hir_self_ty,
                     segment,
                     hir_ty.hir_id,
                     hir_ty.span,
-                    PermitVariants::No,
+                    permit_variants,
                 )
                 .map(|(ty, _, _)| ty)
                 .unwrap_or_else(|guar| Ty::new_error(tcx, guar))
@@ -3400,7 +3506,11 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 let ty_span = ty.span;
                 let ty = self.lower_ty(ty);
                 let pat_ty = match self.lower_pat_ty_pat(ty, ty_span, pat) {
-                    Ok(kind) => Ty::new_pat(tcx, ty, tcx.mk_pat(kind)),
+                    Ok(kind) => {
+                        let pattern = tcx.mk_pat(kind);
+                        Ty::new_refined(tcx, ty, tcx.refinement_for_pattern(pattern))
+                    }
+
                     Err(guar) => Ty::new_error(tcx, guar),
                 };
                 self.record_ty(pat.hir_id, ty, pat.span);
@@ -3605,7 +3715,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 dcx.span_err(ty_span, format!("cannot use `{ty}` in this position")),
             ),
             // FIXME(FRTs): support these types?
-            ty::Array(..) | ty::Pat(..) => Ty::new_error(
+            ty::Array(..) | ty::Refined(..) => Ty::new_error(
                 tcx,
                 dcx.span_err(ty_span, format!("type `{ty}` is not yet supported in `field_of!`")),
             ),

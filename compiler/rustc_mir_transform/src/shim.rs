@@ -1010,8 +1010,11 @@ pub(super) fn build_adt_ctor(tcx: TyCtxt<'_>, ctor_id: DefId) -> Body<'_> {
         .expect("LBR in ADT constructor signature");
     let sig = tcx.normalize_erasing_regions(typing_env, Unnormalized::new_wip(sig));
 
-    let ty::Adt(adt_def, args) = sig.output().kind() else {
-        bug!("unexpected type for ADT ctor {:?}", sig.output());
+    let output = sig.output();
+    let representation_output =
+        tcx.exact_constructor_type(output).map_or(output, |exact| exact.base);
+    let ty::Adt(adt_def, args) = representation_output.kind() else {
+        bug!("unexpected type for ADT ctor {:?}", output);
     };
 
     debug!("build_ctor: ctor_id={:?} sig={:?}", ctor_id, sig);

@@ -958,7 +958,7 @@ impl<'rt, 'tcx, M: Machine<'tcx>> ValidityVisitor<'rt, 'tcx, M> {
             | ty::Str
             | ty::Dynamic(..)
             | ty::Closure(..)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::CoroutineClosure(..)
             | ty::Coroutine(..) => interp_ok(false),
             // Some types only occur during typechecking, they have no layout.
@@ -1455,52 +1455,65 @@ impl<'rt, 'tcx, M: Machine<'tcx>> ValueVisitor<'tcx, M> for ValidityVisitor<'rt,
                     self.visit_field(val, 0, &self.ecx.project_index(val, 0)?)?;
                 }
             }
-            ty::Pat(base, pat) => {
-                // First check that the base type is valid
-                self.visit_value(&val.transmute(self.ecx.layout_of(*base)?, self.ecx)?)?;
-                // When you extend this match, make sure to also add tests to
-                // tests/ui/type/pattern_types/validity.rs
-                match **pat {
-                    // Range and non-null patterns are precisely reflected into `valid_range` and thus
-                    // handled fully by `visit_scalar` (called below).
-                    ty::PatternKind::Range { .. } => {},
-                    ty::PatternKind::NotNull => {},
+            ty::Refined(base, refinement) => {
+                let base_layout = self.ecx.layout_of(*base)?;
+                let base_val = val.transmute(base_layout, self.ecx)?;
+                self.visit_value(&base_val)?;
 
-                    // FIXME(pattern_types): check that the value is covered by one of the variants.
-                    // For now, we rely on layout computation setting the scalar's `valid_range` to
-                    // match the pattern. However, this cannot always work; the layout may
-                    // pessimistically cover actually illegal ranges and Miri would miss that UB.
-                    // The consolation here is that codegen also will miss that UB, so at least
-                    // we won't see optimizations actually breaking such programs.
-                    ty::PatternKind::Or(_patterns) => {}
-                }
-                // FIXME(pattern_types): handle everything based on the pattern, not on the layout.
-                // it's ok to run scalar validation even if the pattern type is `u8 is 0..=255` and thus
-                // allows uninit values, because that's rare and so not a perf issue.
-                match val.layout.backend_repr {
-                    BackendRepr::Scalar(scalar_layout) => {
-                        if !scalar_layout.is_uninit_valid() {
-                            // There is something to check here.
-                            // We read directly via `ecx` since the read cannot fail -- we already read
-                            // this field above when recursing into the field.
-                            let scalar = self.ecx.read_scalar(val)?;
-                            self.visit_scalar(scalar, scalar_layout)?;
+                match self.ecx.tcx.refinement_type_invariant(*refinement) {
+                    ty::RefinementTypeInvariant::ScalarPattern(pattern) => {
+                        match *pattern {
+                            // Range and non-null patterns are precisely reflected into `valid_range`
+                            // and thus handled fully by `visit_scalar` below.
+                            ty::PatternKind::Range { .. } | ty::PatternKind::NotNull => {}
+
+                            // FIXME(pattern_types): check that the value is covered by one of the
+                            // variants. For now, layout computation supplies the scalar valid range.
+                            ty::PatternKind::Or(_patterns) => {}
+                        }
+
+                        // Pattern validity is partly represented by scalar valid ranges. Run scalar
+                        // validation even for a full-range pattern; this is rare and keeps the
+                        // validity check aligned with the layout authority.
+                        match val.layout.backend_repr {
+                            BackendRepr::Scalar(scalar_layout) => {
+                                if !scalar_layout.is_uninit_valid() {
+                                    let scalar = self.ecx.read_scalar(val)?;
+                                    self.visit_scalar(scalar, scalar_layout)?;
+                                }
+                            }
+                            BackendRepr::ScalarPair { a: a_layout, b: b_layout, b_offset: _ } => {
+                                if !a_layout.is_uninit_valid() && !b_layout.is_uninit_valid() {
+                                    let (a, b) = self.ecx.read_immediate(val)?.to_scalar_pair();
+                                    self.visit_scalar(a, a_layout)?;
+                                    self.visit_scalar(b, b_layout)?;
+                                }
+                            }
+                            BackendRepr::SimdVector { .. }
+                            | BackendRepr::SimdScalableVector { .. } => unreachable!(),
+                            BackendRepr::Memory { .. } => unreachable!(),
                         }
                     }
-                    BackendRepr::ScalarPair { a: a_layout, b: b_layout, b_offset: _ } => {
-                        // We can only proceed if *both* scalars need to be initialized.
-                        // FIXME: find a way to also check ScalarPair when one side can be uninit but
-                        // the other must be init.
-                        if !a_layout.is_uninit_valid() && !b_layout.is_uninit_valid() {
-                            // We read directly via `ecx` since the read cannot fail -- we already read
-                            // this field above when recursing into the field.
-                            let (a, b) = self.ecx.read_immediate(val)?.to_scalar_pair();
-                            self.visit_scalar(a, a_layout)?;
-                            self.visit_scalar(b, b_layout)?;
+                    ty::RefinementTypeInvariant::ExactConstructor(variant_def_id) => {
+                        let ty::Adt(adt_def, _) = *base.kind() else {
+                            bug!(
+                                "exact constructor refinement {:?} has non-ADT base type {base}",
+                                variant_def_id
+                            )
+                        };
+                        let expected = adt_def.variant_index_with_id(variant_def_id);
+                        let actual = self.read_discriminant(&base_val)?;
+                        if actual != expected {
+                            let actual_name = adt_def.variant(actual).name;
+                            let expected_name = adt_def.variant(expected).name;
+                            throw_validation_failure!(
+                                self.path,
+                                format!(
+                                    "encountered variant `{actual_name}`, but exact refinement requires `{expected_name}`"
+                                )
+                            );
                         }
                     }
-                    BackendRepr::SimdVector { .. } | BackendRepr::SimdScalableVector { .. } => unreachable!(),
-                    BackendRepr::Memory { .. } => unreachable!()
                 }
             }
             ty::Adt(adt, _) if adt.is_maybe_dangling() => {

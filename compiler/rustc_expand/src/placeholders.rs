@@ -180,6 +180,7 @@ pub(crate) fn placeholder(
                 fields: Default::default(),
                 recovered: ast::Recovered::No
             },
+            scheme: ast::VariantSchemeSyntax::Ordinary,
             disr_expr: None,
             id,
             ident,

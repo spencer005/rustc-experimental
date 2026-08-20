@@ -1493,14 +1493,25 @@ pub(crate) struct CoerceUnsizedNonStruct {
 }
 
 #[derive(Diagnostic)]
-#[diag("only pattern types with the same pattern can be coerced between each other")]
-pub(crate) struct CoerceSamePatKind {
+#[diag("explicit impl of `{$trait_name}` for an exact constructor type is not permitted")]
+#[note("exact constructor refinements use the enum family's destruction and compiler-derived structural capabilities")]
+
+pub(crate) struct ExactRefinementTraitImpl {
+    #[primary_span]
+    pub span: Span,
+    pub trait_name: String,
+}
+
+#[derive(Diagnostic)]
+#[diag("only refined types with the same refinement can be coerced between each other")]
+pub(crate) struct CoerceSameRefinement {
     #[primary_span]
     pub span: Span,
     pub trait_name: &'static str,
-    pub pat_a: String,
-    pub pat_b: String,
+    pub refinement_a: String,
+    pub refinement_b: String,
 }
+
 
 #[derive(Diagnostic)]
 #[diag("the trait `{$trait_name}` may only be implemented for a coercion between structures", code = E0377)]

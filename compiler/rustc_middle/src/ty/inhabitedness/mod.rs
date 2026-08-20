@@ -294,7 +294,7 @@ impl<'tcx> OpsemInhabitedCtx<'tcx> {
             ty::Array(elem, len) => {
                 len.try_to_target_usize(tcx).unwrap() == 0 || self.is_inhabited_ty(elem)
             }
-            ty::Pat(inner, _pat) => self.is_inhabited_ty(inner),
+            ty::Refined(inner, _pat) => self.is_inhabited_ty(inner),
             ty::Closure(_def, args) => {
                 let args = args.as_closure();
                 args.upvar_tys().iter().all(|ty| self.is_inhabited_ty(ty))

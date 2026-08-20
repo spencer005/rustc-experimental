@@ -435,6 +435,7 @@ enum ImplTraitPosition {
     StaticTy,
     AssocTy,
     FieldTy,
+    VariantResult,
     Cast,
     ImplSelf,
     OffsetOf,
@@ -461,6 +462,8 @@ impl std::fmt::Display for ImplTraitPosition {
             ImplTraitPosition::StaticTy => "static types",
             ImplTraitPosition::AssocTy => "associated types",
             ImplTraitPosition::FieldTy => "field types",
+            ImplTraitPosition::VariantResult => "refined constructor result types",
+
             ImplTraitPosition::Cast => "cast expression types",
             ImplTraitPosition::ImplSelf => "impl headers",
             ImplTraitPosition::OffsetOf => "`offset_of!` parameters",

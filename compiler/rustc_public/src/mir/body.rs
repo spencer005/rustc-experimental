@@ -1089,6 +1089,11 @@ pub enum CastKind {
     Transmute,
     BoxDerefTransmute,
     Subtype,
+    /// Refine a constructor-produced enum family value to its exact constructor type.
+    RefinementConstruct,
+
+    /// Forget an exact constructor refinement while preserving the base representation.
+    RefinementForget,
 }
 
 impl Operand {

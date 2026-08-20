@@ -218,10 +218,60 @@ pub(super) fn type_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<'_
             ForeignItemKind::Type => Ty::new_foreign(tcx, def_id.to_def_id()),
         },
 
-        Node::Ctor(def) | Node::Variant(Variant { data: def, .. }) => match def {
+        Node::Variant(variant) => match variant.data {
             VariantData::Unit(..) | VariantData::Struct { .. } => {
-                tcx.type_of(tcx.hir_get_parent_item(hir_id)).instantiate_identity().skip_norm_wip()
+                let family_def_id = tcx.hir_get_parent_item(hir_id).def_id.to_def_id();
+                let family_ty = tcx.type_of(family_def_id).instantiate_identity().skip_norm_wip();
+                match tcx.variant_scheme(variant.def_id) {
+                    ty::VariantScheme::Refined(scheme) => {
+                        if tcx.enum_preserves_exact_variants(family_def_id) {
+                            tcx.exact_variant_ty(scheme.result, variant.def_id.to_def_id())
+                        } else {
+                            scheme.result
+                        }
+                    }
+                    ty::VariantScheme::Invalid(guar) => Ty::new_error(tcx, *guar),
+                    ty::VariantScheme::Ordinary => {
+                        if tcx.enum_preserves_exact_variants(family_def_id) {
+                            tcx.exact_variant_ty(family_ty, variant.def_id.to_def_id())
+                        } else {
+                            family_ty
+                        }
+                    }
+                }
             }
+            VariantData::Tuple(_, hir_id, ctor) => new_bound_fn_def(hir_id, ctor.to_def_id()),
+        },
+
+        Node::Ctor(def) => match def {
+            VariantData::Unit(..) | VariantData::Struct { .. } => match tcx.parent_hir_node(hir_id) {
+                Node::Variant(variant) => {
+                    let family_def_id = tcx.hir_get_parent_item(hir_id).def_id.to_def_id();
+                    let family_ty = tcx.type_of(family_def_id).instantiate_identity().skip_norm_wip();
+                    match tcx.variant_scheme(variant.def_id) {
+                        ty::VariantScheme::Refined(scheme) => {
+                            if tcx.enum_preserves_exact_variants(family_def_id) {
+                                tcx.exact_variant_ty(scheme.result, variant.def_id.to_def_id())
+                            } else {
+                                scheme.result
+                            }
+                        }
+                        ty::VariantScheme::Invalid(guar) => Ty::new_error(tcx, *guar),
+                        ty::VariantScheme::Ordinary => {
+                            if tcx.enum_preserves_exact_variants(family_def_id) {
+                                tcx.exact_variant_ty(family_ty, variant.def_id.to_def_id())
+                            } else {
+                                family_ty
+                            }
+                        }
+                    }
+                }
+                Node::Item(_) => tcx
+                    .type_of(tcx.hir_get_parent_item(hir_id))
+                    .instantiate_identity()
+                    .skip_norm_wip(),
+                node => bug!("constructor has unexpected HIR parent: {node:?}"),
+            },
             VariantData::Tuple(_, hir_id, ctor) => new_bound_fn_def(*hir_id, ctor.to_def_id()),
         },
 

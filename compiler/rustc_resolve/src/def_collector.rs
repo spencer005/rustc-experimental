@@ -336,7 +336,9 @@ impl<'a, 'ra, 'tcx> visit::Visitor<'a> for DefCollector<'a, 'ra, 'tcx> {
             return;
         }
         let feed = self.create_def(v.id, Some(v.ident.name), DefKind::Variant, v.span);
+
         self.with_parent(feed.def_id(), |this| this.brg_visit_variant(v, feed));
+
     }
 
     fn visit_where_predicate(&mut self, pred: &'a WherePredicate) {

@@ -591,7 +591,7 @@ fn clean_generic_param_def(
     cx: &mut DocContext<'_>,
 ) -> GenericParamDef {
     let (name, kind) = match def.kind {
-        ty::GenericParamDefKind::Lifetime => {
+        ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
             (def.name, GenericParamDefKind::Lifetime { outlives: ThinVec::new() })
         }
         ty::GenericParamDefKind::Type { has_default, synthetic, .. } => {
@@ -872,7 +872,9 @@ fn clean_ty_generics_inner<'tcx>(
         .own_params
         .iter()
         .filter(|param| match param.kind {
-            ty::GenericParamDefKind::Lifetime => !param.is_anonymous_lifetime(),
+            ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {
+                !param.is_anonymous_lifetime()
+            }
             ty::GenericParamDefKind::Type { synthetic, .. } => {
                 if param.name == kw::SelfUpper {
                     debug_assert_eq!(param.index, 0);
@@ -1890,14 +1892,24 @@ pub(crate) fn clean_ty<'tcx>(ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> T
             BorrowedRef { lifetime, mutability: m.mutbl, type_: Box::new(clean_ty(m.ty, cx)) }
         }
         TyKind::Slice(ty) => Slice(Box::new(clean_ty(ty, cx))),
-        TyKind::Pat(inner_ty, pat) => {
-            // Local HIR pattern types should print the same way as cross-crate inlined ones,
-            // so lower to the canonical `rustc_middle::ty::Pattern` representation first.
-            let pat = match lower_ty(cx.tcx, ty).kind() {
-                ty::Pat(_, pat) => format!("{pat:?}").into_boxed_str(),
-                _ => format!("{pat:?}").into(),
+        TyKind::Pat(inner_ty, _pat) => {
+            let lowered = lower_ty(cx.tcx, ty);
+            let pattern = match *lowered.kind() {
+                ty::Refined(_, refinement) => match cx.tcx.refinement_type_invariant(refinement) {
+                    ty::RefinementTypeInvariant::ScalarPattern(pattern) => {
+                        format!("{pattern:?}").into_boxed_str()
+                    }
+                    ty::RefinementTypeInvariant::ExactConstructor(variant_def_id) => bug!(
+                        "HIR pattern type lowered to exact constructor refinement {:?}",
+                        variant_def_id
+                    ),
+                },
+                _ => bug!("HIR pattern type lowered to non-refined type {lowered:?}"),
             };
-            Type::Pat(Box::new(clean_ty(inner_ty, cx)), pat)
+            Type::Refined(
+                Box::new(clean_ty(inner_ty, cx)),
+                TypeRefinement::Pattern(pattern),
+            )
         }
         TyKind::FieldOf(ty, hir::TyFieldPath { variant, field }) => {
             let field_str = if let Some(variant) = variant {
@@ -2152,10 +2164,20 @@ pub(crate) fn clean_middle_ty<'tcx>(
         ty::Float(float_ty) => Primitive(float_ty.into()),
         ty::Str => Primitive(PrimitiveType::Str),
         ty::Slice(ty) => Slice(Box::new(clean_middle_ty(bound_ty.rebind(ty), cx, None, None))),
-        ty::Pat(ty, pat) => Type::Pat(
-            Box::new(clean_middle_ty(bound_ty.rebind(ty), cx, None, None)),
-            format!("{pat:?}").into_boxed_str(),
-        ),
+        ty::Refined(base, refinement) => {
+            let refinement = match cx.tcx.refinement_type_identity(refinement) {
+                ty::RefinementTypeIdentity::Pattern(pattern) => {
+                    TypeRefinement::Pattern(format!("{pattern:?}").into_boxed_str())
+                }
+                ty::RefinementTypeIdentity::Constructor(variant_def_id) => {
+                    TypeRefinement::Constructor(cx.tcx.item_name(variant_def_id))
+                }
+            };
+            Type::Refined(
+                Box::new(clean_middle_ty(bound_ty.rebind(base), cx, None, None)),
+                refinement,
+            )
+        }
         ty::Array(ty, n) => {
             let n = cx
                 .tcx

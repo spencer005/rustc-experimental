@@ -406,6 +406,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 Adjust::Pointer(_pointer_coercion) => {
                     // FIXME(const_trait_impl): We should probably enforce these.
                 }
+                Adjust::RefinementConstruct | Adjust::RefinementForget => {}
                 Adjust::GenericReborrow(_) => {
                     // FIXME(reborrow): figure out if we have effects to enforce here.
                 }
@@ -616,8 +617,13 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         ty.normalized
     }
 
-    pub(super) fn user_args_for_adt(ty: LoweredTy<'tcx>) -> UserArgs<'tcx> {
-        match (ty.raw.kind(), ty.normalized.kind()) {
+    pub(super) fn user_args_for_adt(&self, ty: LoweredTy<'tcx>) -> UserArgs<'tcx> {
+        let raw = self.tcx.exact_constructor_type(ty.raw).map_or(ty.raw, |exact| exact.base);
+        let normalized = self
+            .tcx
+            .exact_constructor_type(ty.normalized)
+            .map_or(ty.normalized, |exact| exact.base);
+        match (raw.kind(), normalized.kind()) {
             (ty::Adt(_, args), _) => UserArgs { args, user_self_ty: None },
             (_, ty::Adt(adt, args)) => UserArgs {
                 args,
@@ -698,16 +704,44 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    // FIXME(arielb1): use this instead of field.ty everywhere
-    // Only for fields! Returns <none> for methods>
-    // Indifferent to privacy flags
+    // Only for fields. Indifferent to privacy flags.
     pub(crate) fn field_ty(
         &self,
         span: Span,
         field: &'tcx ty::FieldDef,
         args: GenericArgsRef<'tcx>,
     ) -> Ty<'tcx> {
-        self.normalize(span, field.ty(self.tcx, args))
+        let parent = self.tcx.parent(field.did);
+        let field_ty = if self.tcx.def_kind(parent) == DefKind::Variant {
+            let adt = self.tcx.adt_def(self.tcx.parent(parent));
+            let variant = adt.variant(adt.variant_index_with_id(parent));
+            let field_index = variant
+                .fields
+                .iter_enumerated()
+                .find_map(|(index, candidate)| (candidate.did == field.did).then_some(index))
+                .unwrap_or_else(|| {
+                    bug!("field {:?} was not found in variant {:?}", field.did, parent)
+                });
+            match variant.field_ty(self.tcx, field_index, args) {
+                Ok(field_ty) => field_ty,
+                Err(ty::VariantFieldTyError::InvalidScheme(guar)) => {
+                    return Ty::new_error(self.tcx, guar);
+                }
+                Err(ty::VariantFieldTyError::Recovery(err)) => {
+                    let guar = self.dcx().span_err(
+                        span,
+                        format!(
+                            "cannot recover constructor binder `{}` from this family type",
+                            self.tcx.item_name(err.binder_def_id)
+                        ),
+                    );
+                    return Ty::new_error(self.tcx, guar);
+                }
+            }
+        } else {
+            field.ty(self.tcx, args)
+        };
+        self.normalize(span, field_ty)
     }
 
     /// Drain all obligations that are stalled on coroutines defined in this body.
@@ -1122,6 +1156,28 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             }
             _ => {}
         }
+        let refined_variant = match res {
+            Res::Def(DefKind::Ctor(CtorOf::Variant, _), ctor_def_id) => {
+                let variant_def_id = tcx.parent(ctor_def_id);
+                match tcx.variant_scheme(variant_def_id) {
+                    ty::VariantScheme::Refined(scheme) => Some((variant_def_id, scheme)),
+                    ty::VariantScheme::Invalid(guar) => {
+                        return (Ty::new_error(tcx, *guar), res);
+                    }
+                    ty::VariantScheme::Ordinary => None,
+                }
+            }
+            Res::Def(DefKind::Variant, variant_def_id) => {
+                match tcx.variant_scheme(variant_def_id) {
+                    ty::VariantScheme::Refined(scheme) => Some((variant_def_id, scheme)),
+                    ty::VariantScheme::Invalid(guar) => {
+                        return (Ty::new_error(tcx, *guar), res);
+                    }
+                    ty::VariantScheme::Ordinary => None,
+                }
+            }
+            _ => None,
+        };
 
         // Now that we have categorized what space the parameters for each
         // segment belong to, let's sort out the parameters that the user
@@ -1132,7 +1188,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             generic_segments.iter().map(|GenericPathSegment(_, index)| index).collect();
         let generics_err = self.lowerer().prohibit_generic_args(
             segments.iter().enumerate().filter_map(|(index, seg)| {
-                if !indices.contains(&index) || is_alias_variant_ctor { Some(seg) } else { None }
+                if !indices.contains(&index) || (is_alias_variant_ctor && refined_variant.is_none())
+                {
+                    Some(seg)
+                } else {
+                    None
+                }
             }),
             err_extend,
         );
@@ -1165,7 +1226,25 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         let mut explicit_late_bound = ExplicitLateBound::No;
         for &GenericPathSegment(def_id, index) in &generic_segments {
             let seg = &segments[index];
-            let generics = tcx.generics_of(def_id);
+            let local_generics;
+            let generics =
+                if refined_variant.is_some_and(|(variant_def_id, _)| variant_def_id == def_id) {
+                    let scheme = refined_variant.unwrap().1;
+                    let own_params = scheme.binders.local.clone();
+                    let param_def_id_to_index =
+                        own_params.iter().map(|param| (param.def_id, param.index)).collect();
+                    local_generics = ty::Generics {
+                        parent: None,
+                        parent_count: 0,
+                        own_params,
+                        param_def_id_to_index,
+                        has_self: false,
+                        has_late_bound_regions: tcx.generics_of(def_id).has_late_bound_regions,
+                    };
+                    &local_generics
+                } else {
+                    tcx.generics_of(def_id)
+                };
 
             // Argument-position `impl Trait` is treated as a normal generic
             // parameter internally, but we don't allow users to specify the
@@ -1271,7 +1350,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             .emit_err(CtorIsPrivate { span, def: tcx.def_path_str(adt_def.did()) });
                     }
                     let new_res = Res::Def(DefKind::Ctor(CtorOf::Struct, ctor_kind), ctor_def_id);
-                    let user_args = Self::user_args_for_adt(ty);
+                    let user_args = self.user_args_for_adt(ty);
                     user_self_ty = user_args.user_self_ty;
                     (new_res, Some(user_args.args))
                 }
@@ -1400,11 +1479,49 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             }
         }
 
+        let refined_family_args = refined_variant.map(|(_, scheme)| {
+            if let Some(self_ty) = self_ty {
+                let ty::Adt(adt_def, args) = *self_ty.normalized.kind() else {
+                    span_bug!(
+                        span,
+                        "refined variant self type was not an ADT: {:?}",
+                        self_ty.normalized
+                    )
+                };
+                if adt_def.did() != scheme.family_def_id {
+                    span_bug!(
+                        span,
+                        "refined variant self type belongs to {}, expected {}",
+                        tcx.def_path_str(adt_def.did()),
+                        tcx.def_path_str(scheme.family_def_id)
+                    )
+                }
+                args
+            } else if let Some(&GenericPathSegment(_, index)) = generic_segments
+                .iter()
+                .find(|GenericPathSegment(def_id, _)| *def_id == scheme.family_def_id)
+            {
+                self.lowerer().lower_generic_args_of_path_segment(
+                    span,
+                    scheme.family_def_id,
+                    &segments[index],
+                )
+            } else {
+                self.fresh_args_for_item(span, scheme.family_def_id)
+            }
+        });
+
+        let refined_scheme_parent_args = refined_variant.map(|(_, scheme)| {
+            tcx.mk_args_from_iter(
+                scheme.binders.family.iter().map(|param| self.var_for_def(span, param)),
+            )
+        });
+
         let args_raw = implicit_args.unwrap_or_else(|| {
             lower_generic_args(
                 self,
                 def_id,
-                &[],
+                refined_scheme_parent_args.map_or(&[], |args| &args[..]),
                 has_self,
                 self_ty.map(|s| s.raw),
                 &arg_count,
@@ -1417,6 +1534,39 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 },
             )
         });
+
+        let refined_variant_args = refined_variant.map(|(_, scheme)| {
+            let family = refined_family_args.expect("refined variant must have family arguments");
+            let local_start = scheme.binders.family.len();
+            let local_end = local_start + scheme.binders.local.len();
+            let local = tcx.mk_args(&args_raw[local_start..local_end]);
+            ty::VariantArgs { family, local }
+        });
+
+        if let (Some((_, scheme)), Some(variant_args)) = (refined_variant, refined_variant_args) {
+            debug!(?variant_args, "instantiated refined variant path arguments");
+            let declared_result = self.normalize(
+                span,
+                ty::EarlyBinder::bind(tcx, scheme.result).instantiate(tcx, args_raw),
+            );
+            let path_family_ty = self.normalize(
+                span,
+                tcx.type_of(scheme.family_def_id).instantiate(tcx, variant_args.family),
+            );
+            if let Err(mut diag) =
+                self.demand_eqtype_diag(path_span, path_family_ty, declared_result)
+            {
+                diag.primary_message(
+                    "constructor result is incompatible with the family arguments on this path",
+                );
+                diag.note(format!("this constructor produces `{declared_result}`"));
+                diag.help(
+                    "use family arguments compatible with the constructor result, or omit them and let the result be inferred",
+                );
+                let guar = diag.emit();
+                self.set_tainted_by_errors(guar);
+            }
+        }
 
         let args_for_user_type = if let Res::Def(DefKind::AssocConst { .. }, def_id) = res {
             self.transform_args_for_inherent_type_const(def_id, args_raw)

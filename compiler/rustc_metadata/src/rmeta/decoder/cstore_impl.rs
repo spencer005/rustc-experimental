@@ -233,6 +233,9 @@ provide! { tcx, def_id, other, cdata,
     explicit_item_self_bounds => { table_defaulted_array }
     explicit_clauses_of => { table }
     generics_of => { table }
+    variant_binder_scheme => { table }
+    variant_scheme => { table }
+
     inferred_outlives_of => { table_defaulted_array }
     explicit_super_clauses_of => { table_defaulted_array }
     explicit_implied_clauses_of => { table_defaulted_array }

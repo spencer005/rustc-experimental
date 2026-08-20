@@ -489,7 +489,7 @@ pub(crate) fn spanned_type_di_node<'ll, 'tcx>(
             AdtKind::Enum => enums::build_enum_type_di_node(cx, unique_type_id, span),
         },
         ty::Tuple(_) => build_tuple_type_di_node(cx, unique_type_id),
-        ty::Pat(base, _) => return type_di_node(cx, base),
+        ty::Refined(base, _) => return type_di_node(cx, base),
         ty::UnsafeBinder(_) => build_unsafe_binder_type_di_node(cx, t, unique_type_id),
         ty::Alias(..)
         | ty::Param(_)

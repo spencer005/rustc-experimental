@@ -537,7 +537,11 @@ fn ty_to_res<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Res> {
         ty::Str => Res::Primitive(Str),
         ty::Tuple(tys) if tys.is_empty() => Res::Primitive(Unit),
         ty::Tuple(_) => Res::Primitive(Tuple),
-        ty::Pat(..) => Res::Primitive(Pat),
+        ty::Refined(base, refinement) => match tcx.refinement_type_invariant(refinement) {
+            ty::RefinementTypeInvariant::ScalarPattern(_) => Res::Primitive(Pat),
+            ty::RefinementTypeInvariant::ExactConstructor(_) => return ty_to_res(tcx, base),
+        },
+
         ty::Array(..) => Res::Primitive(Array),
         ty::Slice(_) => Res::Primitive(Slice),
         ty::RawPtr(_, _) => Res::Primitive(RawPointer),

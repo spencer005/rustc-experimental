@@ -188,7 +188,7 @@ impl<'tcx> InterpCx<'tcx, CompileTimeMachine<'tcx>> {
                             variant
                         }
                         ty::Foreign(_)
-                        | ty::Pat(_, _)
+                        | ty::Refined(_, _)
                         | ty::FnDef(..)
                         | ty::UnsafeBinder(..)
                         | ty::Closure(..)
@@ -397,7 +397,7 @@ impl<'tcx> InterpCx<'tcx, CompileTimeMachine<'tcx>> {
             | ty::Foreign(..)
             | ty::Str
             | ty::Array(..)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::RawPtr(..)
             | ty::Ref(..)
             | ty::FnPtr(..)

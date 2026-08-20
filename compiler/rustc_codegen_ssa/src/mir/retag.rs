@@ -142,7 +142,7 @@ impl<'a, 'tcx, V> RetagPlan<V> {
 
                 // `*mut T is !null`
                 let pattern = nonnull.field(bx, 0);
-                let ty::Pat(base, _) = pattern.ty.kind() else {
+                let ty::Refined(base, _) = pattern.ty.kind() else {
                     unreachable!("`NonNull` should contain a pattern type")
                 };
                 assert_eq!(base.builtin_deref(true), Some(boxed_ty));

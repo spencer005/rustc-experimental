@@ -61,6 +61,31 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                     this.as_rvalue(block, scope, value)
                 })
             }
+            ExprKind::RefinementConstruct { source } => {
+                let operand = unpack!(
+                    block = this.as_operand(
+                        block,
+                        scope,
+                        source,
+                        LocalInfo::Boring,
+                        NeedsTemporary::No,
+                    )
+                );
+                block.and(Rvalue::Cast(CastKind::RefinementConstruct, operand, expr.ty))
+            }
+
+            ExprKind::RefinementForget { source } => {
+                let operand = unpack!(
+                    block = this.as_operand(
+                        block,
+                        scope,
+                        source,
+                        LocalInfo::Boring,
+                        NeedsTemporary::No,
+                    )
+                );
+                block.and(Rvalue::Cast(CastKind::RefinementForget, operand, expr.ty))
+            }
             ExprKind::Repeat { value, count } => {
                 if Some(0) == count.try_to_target_usize(this.tcx) {
                     this.build_zero_repeat(block, value, scope, source_info)

@@ -1,0 +1,22 @@
+error: constructor binder `U` is not recoverable from the declared result `Exists<i32>`
+  --> $DIR/unrecoverable-binder.rs:8:10
+   |
+LL |     Pack<U>(U) -> Exists<i32>,
+   |          ^        ----------- this result does not determine `U` through a recoverable type position
+   |          |
+   |          this binder participates in the constructed value
+   |
+   = help: make `U` part of the result through a recoverable form such as a direct family argument, tuple, nominal type argument, array, slice, raw pointer, or reference; otherwise remove it from stored fields and result-dependent state
+
+error: constructor binder `U` is not recoverable from the declared result `Projected<<U as Assoc>::Output>`
+  --> $DIR/unrecoverable-binder.rs:19:13
+   |
+LL |     Project<U: Assoc>(U) -> Projected<U::Output>,
+   |             ^               -------------------- this result does not determine `U` through a recoverable type position
+   |             |
+   |             this binder participates in the constructed value
+   |
+   = help: make `U` part of the result through a recoverable form such as a direct family argument, tuple, nominal type argument, array, slice, raw pointer, or reference; otherwise remove it from stored fields and result-dependent state
+
+error: aborting due to 2 previous errors
+

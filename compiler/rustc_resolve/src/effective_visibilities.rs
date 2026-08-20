@@ -374,7 +374,7 @@ impl<'a, 'ra, 'tcx> Visitor<'a> for EffectiveVisibilitiesVisitor<'a, 'ra, 'tcx> 
                 self.current_private_vis = prev_private_vis;
             }
 
-            ast::ItemKind::Enum(_, _, EnumDef { variants }) => {
+            ast::ItemKind::Enum(_, _, EnumDef { variants, .. }) => {
                 self.set_bindings_effective_visibilities(def_id);
                 for variant in variants {
                     let variant_def_id = self.r.child_def_id(item.id, variant.id);

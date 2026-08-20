@@ -825,7 +825,12 @@ fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, cur_block: Block, stmt:
                     crate::unsize::coerce_unsized_into(fx, operand, lval);
                 }
                 Rvalue::Cast(
-                    CastKind::Transmute | CastKind::BoxDerefTransmute | CastKind::Subtype,
+                    CastKind::Transmute
+                    | CastKind::BoxDerefTransmute
+                    | CastKind::Subtype
+                    | CastKind::RefinementConstruct
+
+                    | CastKind::RefinementForget,
                     ref operand,
                     _to_ty,
                 ) => {

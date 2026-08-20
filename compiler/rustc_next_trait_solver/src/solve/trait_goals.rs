@@ -767,7 +767,7 @@ where
                 | ty::Char
                 | ty::RawPtr(..)
                 | ty::Never
-                | ty::Pat(..)
+                | ty::Refined(..)
                 | ty::Dynamic(..)
                 | ty::Str
                 | ty::Slice(_)
@@ -1376,7 +1376,7 @@ where
             | ty::Float(_)
             | ty::Str
             | ty::Array(_, _)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::Slice(_)
             | ty::RawPtr(_, _)
             | ty::Ref(_, _, _)

@@ -61,7 +61,7 @@ fn sizedness_constraint_for_ty<'tcx>(
         ty::Foreign(..) => Some(ty),
 
         // Recursive cases
-        ty::Pat(ty, _) => sizedness_constraint_for_ty(tcx, sizedness, *ty),
+        ty::Refined(ty, _) => sizedness_constraint_for_ty(tcx, sizedness, *ty),
 
         ty::Tuple(tys) => {
             tys.last().and_then(|&ty| sizedness_constraint_for_ty(tcx, sizedness, ty))
@@ -376,7 +376,7 @@ fn impl_self_is_guaranteed_unsized<'tcx>(tcx: TyCtxt<'tcx>, impl_def_id: DefId) 
         | ty::Adt(_, _)
         | ty::Foreign(_)
         | ty::Array(_, _)
-        | ty::Pat(_, _)
+        | ty::Refined(_, _)
         | ty::RawPtr(_, _)
         | ty::Ref(_, _, _)
         | ty::FnDef(_, _)

@@ -318,7 +318,7 @@ impl<'tcx> NonCopyConst<'tcx> {
                             .iter()
                             .map(|f| self.is_ty_freeze(tcx, typing_env, f.ty(tcx, args).skip_norm_wip())),
                     ),
-                    ty::Array(ty, _) | ty::Pat(ty, _) => self.is_ty_freeze(tcx, typing_env, ty),
+                    ty::Array(ty, _) | ty::Refined(ty, _) => self.is_ty_freeze(tcx, typing_env, ty),
                     ty::Tuple(tys) => {
                         IsFreeze::from_fields(tys.iter().map(|ty| self.is_ty_freeze(tcx, typing_env, ty)))
                     },

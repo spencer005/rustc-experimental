@@ -106,7 +106,7 @@ impl<'tcx> AbiStableHash<'tcx> for Ty<'tcx> {
             | ty::Ref(_, _, _)
             | ty::Str
             | ty::Array(_, _)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::Slice(_)
             | ty::RawPtr(_, _)
             | ty::FnDef(_, _)

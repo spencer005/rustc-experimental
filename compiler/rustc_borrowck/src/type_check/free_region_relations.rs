@@ -6,11 +6,10 @@ use rustc_infer::infer::outlives;
 use rustc_infer::infer::outlives::env::RegionBoundPairs;
 use rustc_infer::infer::region_constraints::GenericKind;
 use rustc_infer::traits::query::type_op::Normalize;
+use rustc_middle::bug;
 use rustc_middle::mir::ConstraintCategory;
 use rustc_middle::traits::query::OutlivesBound;
 use rustc_middle::ty::{self, RegionVid, Ty, TypeVisitableExt};
-use rustc_middle::bug;
-
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::traits::query::type_op;
 use tracing::{debug, instrument};
@@ -195,7 +194,9 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
                 };
                 (region_def_id == Some(def_id)).then_some(vid)
             })
-            .unwrap_or_else(|| bug!("origin contract region `{def_id:?}` is not universal in `{owner:?}`"))
+            .unwrap_or_else(|| {
+                bug!("origin contract region `{def_id:?}` is not universal in `{owner:?}`")
+            })
     }
 
     fn add_origin_contract(&mut self) {
@@ -205,7 +206,8 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
             return;
         }
         let Some(def_id) = self.universal_regions.defining_ty.def_id().as_local() else { return };
-        let ty::OriginContractAnalysis::Contract(contract) = *self.infcx.tcx.origin_contract(def_id.to_def_id())
+        let ty::OriginContractAnalysis::Contract(contract) =
+            *self.infcx.tcx.origin_contract(def_id.to_def_id())
         else {
             return;
         };
@@ -215,7 +217,6 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
             self.relate_universal_regions(source, target);
         }
     }
-
 
     #[instrument(level = "debug", skip(self))]
     pub(crate) fn create(mut self) -> CreateResult<'tcx> {

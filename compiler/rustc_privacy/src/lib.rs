@@ -302,7 +302,7 @@ where
             | ty::Tuple(..)
             | ty::RawPtr(..)
             | ty::Ref(..)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::FnPtr(..)
             | ty::UnsafeBinder(_)
             | ty::Param(..)
@@ -1057,7 +1057,9 @@ impl<'tcx> Visitor<'tcx> for NamePrivacyVisitor<'tcx> {
     fn visit_expr(&mut self, expr: &'tcx hir::Expr<'tcx>) {
         if let hir::ExprKind::Struct(qpath, fields, ref base) = expr.kind {
             let res = self.typeck_results().qpath_res(qpath, expr.hir_id);
-            let adt = self.typeck_results().expr_ty(expr).ty_adt_def().unwrap();
+            let expr_ty = self.typeck_results().expr_ty(expr);
+            let family_ty = self.tcx.exact_constructor_type(expr_ty).map_or(expr_ty, |exact| exact.base);
+            let adt = family_ty.ty_adt_def().unwrap();
             let variant = adt.variant_of_res(res);
             match *base {
                 hir::StructTailExpr::Base(base) => {

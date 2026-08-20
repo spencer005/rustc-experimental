@@ -91,33 +91,135 @@ fn params_in_repr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> DenseBitSet<u32> {
     let generics = tcx.generics_of(def_id);
     let mut params_in_repr = DenseBitSet::new_empty(generics.own_params.len());
     for variant in adt_def.variants() {
-        for field in variant.fields.iter() {
-            params_in_repr_ty(
-                tcx,
-                tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
-                &mut params_in_repr,
-            );
+        if !adt_def.is_enum() {
+            for field in &variant.fields {
+                params_in_repr_ty(
+                    tcx,
+                    tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
+                    None,
+                    &mut params_in_repr,
+                );
+            }
+            continue;
+        }
+        match tcx.variant_scheme(variant.def_id) {
+            ty::VariantScheme::Ordinary => {
+                for field in &variant.fields {
+                    params_in_repr_ty(
+                        tcx,
+                        tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
+                        None,
+                        &mut params_in_repr,
+                    );
+                }
+            }
+            ty::VariantScheme::Invalid(_) => {}
+            ty::VariantScheme::Refined(scheme) => {
+                let mut scheme_param_to_family =
+                    vec![None; scheme.binders.family.len() + scheme.binders.local.len()];
+
+                for scheme_param in &scheme.binders.family {
+                    let family_param = generics
+                        .own_params
+                        .iter()
+                        .find(|family_param| family_param.def_id == scheme_param.def_id)
+                        .unwrap_or_else(|| {
+                            bug!(
+                                "refined variant family binder {:?} is not a parameter of {:?}",
+                                scheme_param.def_id,
+                                def_id
+                            )
+                        });
+                    scheme_param_to_family[scheme_param.index as usize] = Some(family_param.index);
+                }
+
+                for recovery in &scheme.recoveries {
+                    let scheme_param = scheme
+                        .binders
+                        .family
+                        .iter()
+                        .chain(&scheme.binders.local)
+                        .find(|param| param.def_id == recovery.binder_def_id)
+                        .unwrap_or_else(|| {
+                            bug!(
+                                "recovery for non-scheme binder {:?} in {:?}",
+                                recovery.binder_def_id,
+                                variant.def_id
+                            )
+                        });
+                    let Some(&ty::VariantResultProjection::GenericArg(family_index)) =
+                        recovery.path.first()
+                    else {
+                        bug!(
+                            "recovery for binder {:?} in {:?} does not start at a family argument",
+                            recovery.binder_def_id,
+                            variant.def_id
+                        )
+                    };
+                    if family_index as usize >= generics.own_params.len() {
+                        bug!(
+                            "recovery for binder {:?} in {:?} references family argument {} but {:?} has only {} parameters",
+                            recovery.binder_def_id,
+                            variant.def_id,
+                            family_index,
+                            def_id,
+                            generics.own_params.len()
+                        )
+                    }
+                    scheme_param_to_family[scheme_param.index as usize] = Some(family_index);
+                }
+
+                for field in &scheme.fields {
+                    params_in_repr_ty(
+                        tcx,
+                        field.ty,
+                        Some(&scheme_param_to_family),
+                        &mut params_in_repr,
+                    );
+                }
+            }
         }
     }
     params_in_repr
 }
 
-fn params_in_repr_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, params_in_repr: &mut DenseBitSet<u32>) {
+fn params_in_repr_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    param_index_map: Option<&[Option<u32>]>,
+    params_in_repr: &mut DenseBitSet<u32>,
+) {
     match *ty.kind() {
         ty::Adt(adt, args) => {
             let inner_params_in_repr = tcx.params_in_repr(adt.did());
             for (i, arg) in args.iter().enumerate() {
-                if let ty::GenericArgKind::Type(ty) = arg.kind() {
-                    if inner_params_in_repr.contains(i as u32) {
-                        params_in_repr_ty(tcx, ty, params_in_repr);
-                    }
+                if let ty::GenericArgKind::Type(ty) = arg.kind()
+                    && inner_params_in_repr.contains(i as u32)
+                {
+                    params_in_repr_ty(tcx, ty, param_index_map, params_in_repr);
                 }
             }
         }
-        ty::Array(ty, _) => params_in_repr_ty(tcx, ty, params_in_repr),
-        ty::Tuple(tys) => tys.iter().for_each(|ty| params_in_repr_ty(tcx, ty, params_in_repr)),
+        ty::Array(ty, _) => params_in_repr_ty(tcx, ty, param_index_map, params_in_repr),
+        ty::Tuple(tys) => {
+            tys.iter().for_each(|ty| params_in_repr_ty(tcx, ty, param_index_map, params_in_repr))
+        }
         ty::Param(param) => {
-            params_in_repr.insert(param.index);
+            let family_index = if let Some(param_index_map) = param_index_map {
+                param_index_map
+                    .get(param.index as usize)
+                    .copied()
+                    .flatten()
+                    .unwrap_or_else(|| {
+                        bug!(
+                            "representation field references scheme parameter {} without a family recovery",
+                            param.index
+                        )
+                    })
+            } else {
+                param.index
+            };
+            params_in_repr.insert(family_index);
         }
         _ => {}
     }

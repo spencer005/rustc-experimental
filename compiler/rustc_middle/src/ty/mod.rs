@@ -84,6 +84,13 @@ pub(crate) use self::list::RawList;
 pub use self::list::{List, ListWithCachedTypeInfo};
 pub use self::opaque_types::OpaqueTypeKey;
 pub use self::pattern::{Pattern, PatternKind};
+pub use self::refinement::{
+    ExactConstructorType, KnownConstructor, RefinementConversion,
+    RefinementDefinition, RefinementImplHead, RefinementJoin, RefinementJoinConversion,
+    RefinementLayoutAuthority, RefinementTypeIdentity, RefinementTypeInvariant, RefinementTypeKey,
+    RefinementUnsizeKind,
+};
+
 pub use self::predicate::{
     AliasTerm, AliasTermKind, ArgOutlivesClause, Clause, ClauseKind, CoercePredicate,
     ExistentialPredicate, ExistentialPredicateStableCmpExt, ExistentialProjection,
@@ -137,6 +144,7 @@ pub mod layout;
 pub mod normalize_erasing_regions;
 pub mod offload_meta;
 pub mod pattern;
+pub mod refinement;
 pub mod print;
 pub mod relate;
 pub mod significant_drop_order;
@@ -1477,6 +1485,12 @@ pub struct VariantDef {
     flags: VariantFlags,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum VariantFieldTyError {
+    InvalidScheme(ErrorGuaranteed),
+    Recovery(VariantArgRecoveryError),
+}
+
 impl VariantDef {
     /// Creates a new `VariantDef`.
     ///
@@ -1518,6 +1532,28 @@ impl VariantDef {
             fields,
             flags,
             tainted: recover_tainted,
+        }
+    }
+
+    pub fn field_ty<'tcx>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        field: FieldIdx,
+        family_args: GenericArgsRef<'tcx>,
+    ) -> Result<Unnormalized<'tcx, Ty<'tcx>>, VariantFieldTyError> {
+        if tcx.def_kind(self.def_id) != DefKind::Variant {
+            return Ok(self.fields[field].ty(tcx, family_args));
+        }
+
+        match tcx.variant_scheme(self.def_id) {
+            VariantScheme::Ordinary => Ok(self.fields[field].ty(tcx, family_args)),
+            VariantScheme::Invalid(guar) => Err(VariantFieldTyError::InvalidScheme(*guar)),
+            VariantScheme::Refined(scheme) => {
+                let args = scheme
+                    .recover_representation_args(tcx, family_args)
+                    .map_err(VariantFieldTyError::Recovery)?;
+                Ok(scheme.field_ty(tcx, args, field))
+            }
         }
     }
 

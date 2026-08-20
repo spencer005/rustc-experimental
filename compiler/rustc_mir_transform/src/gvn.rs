@@ -604,7 +604,8 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
             Aggregate(variant, ref fields) => {
                 let fields =
                     fields.iter().map(|&f| self.eval_to_const(f)).collect::<Option<Vec<_>>>()?;
-                let variant = if ty.ty.is_enum() { Some(variant) } else { None };
+                let variant_ty = self.tcx.exact_constructor_type(ty.ty).map_or(ty.ty, |exact| exact.base);
+                let variant = if variant_ty.is_enum() { Some(variant) } else { None };
                 let (BackendRepr::Scalar(..) | BackendRepr::ScalarPair { .. }) = ty.backend_repr
                 else {
                     return None;
@@ -1131,7 +1132,11 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     fn simplify_discriminant(&mut self, place: VnIndex) -> Option<VnIndex> {
-        let enum_ty = self.ty(place);
+        let value_ty = self.ty(place);
+        let enum_ty = self
+            .tcx
+            .exact_constructor_type(value_ty)
+            .map_or(value_ty, |exact| exact.base);
         if enum_ty.is_enum()
             && let Value::Aggregate(variant, _) = self.get(place)
         {
@@ -1141,6 +1146,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
 
         None
     }
+
 
     fn try_as_place_elem(
         &mut self,
@@ -1713,7 +1719,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
                 ty::Tuple(fields) => {
                     fields.iter().any(|field| ty_may_have_ref_inner(tcx, field, depth))
                 }
-                ty::Pat(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => {
+                ty::Refined(ty, _) | ty::Slice(ty) | ty::Array(ty, _) => {
                     ty_may_have_ref_inner(tcx, *ty, depth)
                 }
                 ty::Adt(adt_def, args) => {

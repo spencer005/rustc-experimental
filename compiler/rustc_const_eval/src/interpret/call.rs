@@ -142,7 +142,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 // Recurse.
                 self.unfold_transparent(field, may_unfold)
             }
-            ty::Pat(base, _) => interp_ok(self.layout_of(*base)?),
+            ty::Refined(base, _) => interp_ok(self.layout_of(*base)?),
             // Not a transparent type, no further unfolding.
             _ => interp_ok(layout),
         }
@@ -162,9 +162,11 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         assert!(def.is_enum());
 
         let all_fields_1zst = |variant: &VariantDef| -> InterpResult<'tcx, _> {
-            for field in &variant.fields {
-                let ty = field.ty(*self.tcx, args).skip_norm_wip();
-                let layout = self.layout_of(ty)?;
+            for field in variant.fields.indices() {
+                let Ok(ty) = variant.field_ty(*self.tcx, field, args) else {
+                    return interp_ok(false);
+                };
+                let layout = self.layout_of(ty.skip_norm_wip())?;
                 if !layout.is_1zst() {
                     return interp_ok(false);
                 }
@@ -188,9 +190,10 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         if relevant_variant.fields.len() != 1 {
             return interp_ok(layout);
         }
-        let inner =
-            relevant_variant.fields[FieldIdx::from_u32(0)].ty(*self.tcx, args).skip_norm_wip();
-        let inner = self.layout_of(inner)?;
+        let Ok(inner) = relevant_variant.field_ty(*self.tcx, FieldIdx::ZERO, args) else {
+            return interp_ok(layout);
+        };
+        let inner = self.layout_of(inner.skip_norm_wip())?;
 
         // Check if the inner type is one of the NPO-guaranteed ones.
         // For that we first unpeel transparent *structs* (but not unions).

@@ -283,7 +283,7 @@ fn is_ty_fully_unsafe_celled<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool
 
             ty::Tuple(fields) => fields.iter().all(|field_ty| inner(cx, field_ty, depth + 1)),
 
-            ty::Array(elem_ty, _) | ty::Slice(elem_ty) | ty::Pat(elem_ty, _) => {
+            ty::Array(elem_ty, _) | ty::Slice(elem_ty) | ty::Refined(elem_ty, _) => {
                 inner(cx, *elem_ty, depth + 1)
             }
 

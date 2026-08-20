@@ -127,6 +127,7 @@ fn assumed_wf_types<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> &'tcx [(Ty<'
         DefKind::AssocConst { .. } | DefKind::AssocTy => {
             tcx.assumed_wf_types(tcx.local_parent(def_id))
         }
+        DefKind::Variant => tcx.assumed_wf_types(tcx.local_parent(def_id)),
         DefKind::Static { .. }
         | DefKind::Const { .. }
         | DefKind::AnonConst
@@ -138,7 +139,6 @@ fn assumed_wf_types<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> &'tcx [(Ty<'
         | DefKind::TyAlias => ty::List::empty(),
         DefKind::OpaqueTy
         | DefKind::Mod
-        | DefKind::Variant
         | DefKind::ForeignTy
         | DefKind::TyParam
         | DefKind::ConstParam

@@ -1484,6 +1484,13 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                 record!(self.tables.explicit_clauses_of[def_id] <- self.tcx.explicit_clauses_of(def_id));
                 let inferred_outlives = self.tcx.inferred_outlives_of(def_id);
                 record_defaulted_array!(self.tables.inferred_outlives_of[def_id] <- inferred_outlives);
+                if def_kind == DefKind::Variant {
+                    let scheme = self.tcx.variant_scheme(def_id);
+                    record!(self.tables.variant_scheme[def_id] <- scheme);
+                    if let ty::VariantScheme::Refined(scheme) = scheme {
+                        record!(self.tables.variant_binder_scheme[def_id] <- &scheme.binders);
+                    }
+                }
 
                 for param in &g.own_params {
                     if let ty::GenericParamDefKind::Const { has_default: true, .. } = param.kind {

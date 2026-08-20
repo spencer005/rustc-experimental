@@ -69,8 +69,8 @@ use crate::ty::{
     self, AdtDef, AdtDefData, AdtKind, Binder, Clause, Clauses, Const, FnSigKind, GenericArg,
     GenericArgs, GenericArgsRef, GenericParamDefKind, List, ListWithCachedTypeInfo, ParamConst,
     Pattern, PatternKind, PolyExistentialPredicate, PolyFnSig, Predicate, PredicateKind,
-    PredicatePolarity, Region, RegionKind, ReprOptions, TraitObjectVisitor, Ty, TyKind, TyVid,
-    ValTree, ValTreeKind, Visibility,
+    PredicatePolarity, RefinementTypeKey, Region, RegionKind, ReprOptions, TraitObjectVisitor, Ty,
+    TyKind, TyVid, ValTree, ValTreeKind, Visibility,
 };
 
 impl<'tcx> rustc_type_ir::inherent::DefId<TyCtxt<'tcx>> for DefId {
@@ -149,6 +149,7 @@ pub struct CtxtInterners<'tcx> {
     place_elems: InternedSet<'tcx, List<PlaceElem<'tcx>>>,
     const_: InternedSet<'tcx, WithCachedTypeInfo<ty::ConstKind<'tcx>>>,
     pat: InternedSet<'tcx, PatternKind<'tcx>>,
+    refinement: InternedSet<'tcx, ty::RefinementDefinition<'tcx>>,
     const_allocation: InternedSet<'tcx, Allocation>,
     bound_variable_kinds: InternedSet<'tcx, List<ty::BoundVariableKind<'tcx>>>,
     layout: InternedSet<'tcx, LayoutData<FieldIdx, VariantIdx>>,
@@ -187,6 +188,7 @@ impl<'tcx> CtxtInterners<'tcx> {
             place_elems: InternedSet::with_capacity(N * 2),
             const_: InternedSet::with_capacity(N * 2),
             pat: InternedSet::with_capacity(N),
+            refinement: InternedSet::with_capacity(N),
             const_allocation: InternedSet::with_capacity(N),
             bound_variable_kinds: InternedSet::with_capacity(N * 2),
             layout: InternedSet::with_capacity(N),
@@ -1706,6 +1708,8 @@ macro_rules! nop_list_lift {
 nop_lift! { type_; Ty<'a> => Ty<'tcx> }
 nop_lift! { const_; Const<'a> => Const<'tcx> }
 nop_lift! { pat; Pattern<'a> => Pattern<'tcx> }
+nop_lift! { refinement; RefinementTypeKey<'a> => RefinementTypeKey<'tcx> }
+
 nop_lift! { const_allocation; ConstAllocation<'a> => ConstAllocation<'tcx> }
 nop_lift! { predicate; Predicate<'a> => Predicate<'tcx> }
 nop_lift! { predicate; Clause<'a> => Clause<'tcx> }
@@ -1835,7 +1839,7 @@ impl<'tcx> TyCtxt<'tcx> {
                 Param,
                 Infer,
                 Alias,
-                Pat,
+                Refined,
                 Foreign
             )?;
 
@@ -1982,6 +1986,8 @@ direct_interners! {
     region: pub(crate) intern_region(RegionKind<'tcx>): Region -> Region<'tcx>,
     valtree: pub(crate) intern_valtree(ValTreeKind<TyCtxt<'tcx>>): ValTree -> ValTree<'tcx>,
     pat: pub mk_pat(PatternKind<'tcx>): Pattern -> Pattern<'tcx>,
+    refinement: pub(crate) intern_refinement_definition(ty::RefinementDefinition<'tcx>):
+        RefinementTypeKey -> RefinementTypeKey<'tcx>,
     const_allocation: pub mk_const_alloc(Allocation): ConstAllocation -> ConstAllocation<'tcx>,
     layout: pub mk_layout(LayoutData<FieldIdx, VariantIdx>): Layout -> Layout<'tcx>,
     adt_def: pub mk_adt_def_from_data(AdtDefData): AdtDef -> AdtDef<'tcx>,

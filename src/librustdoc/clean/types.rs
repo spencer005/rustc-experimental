@@ -1392,6 +1392,12 @@ pub(crate) struct PolyTrait {
     pub(crate) generic_params: Vec<GenericParamDef>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum TypeRefinement {
+    Pattern(Box<str>),
+    Constructor(Symbol),
+}
+
 /// Rustdoc's representation of types, mostly based on the [`hir::Ty`].
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Type {
@@ -1420,7 +1426,7 @@ pub(crate) enum Type {
     ///
     /// The `String` field is a stringified version of the array's length parameter.
     Array(Box<Type>, Box<str>),
-    Pat(Box<Type>, Box<str>),
+    Refined(Box<Type>, TypeRefinement),
     FieldOf(Box<Type>, Box<str>),
     /// A raw pointer type: `*const i32`, `*mut i32`
     RawPointer(Mutability, Box<Type>),
@@ -1634,7 +1640,9 @@ impl Type {
             BareFunction(..) => PrimitiveType::Fn,
             Slice(..) => PrimitiveType::Slice,
             Array(..) => PrimitiveType::Array,
-            Type::Pat(..) => PrimitiveType::Pat,
+            Type::Refined(_, TypeRefinement::Pattern(_)) => PrimitiveType::Pat,
+
+            Type::Refined(base, TypeRefinement::Constructor(_)) => return base.def_id(cache),
             Type::FieldOf(..) => PrimitiveType::FieldOf,
             RawPointer(..) => PrimitiveType::RawPointer,
             QPath(QPathData { self_type, .. }) => return self_type.def_id(cache),
@@ -1752,7 +1760,8 @@ impl PrimitiveType {
         }
     }
 
-    pub(crate) fn from_ty(ty: Ty<'_>) -> Option<Self> {
+    pub(crate) fn from_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Self> {
+
         match ty.kind() {
             ty::Array(..) => Some(Self::Array),
             ty::Bool => Some(Self::Bool),
@@ -1762,7 +1771,10 @@ impl PrimitiveType {
             ty::Uint(uint) => Some(Self::from(*uint)),
             ty::Float(float) => Some(Self::from(*float)),
             ty::Never => Some(Self::Never),
-            ty::Pat(..) => Some(Self::Pat),
+            ty::Refined(base, refinement) => match tcx.refinement_type_invariant(*refinement) {
+                ty::RefinementTypeInvariant::ScalarPattern(_) => Some(Self::Pat),
+                ty::RefinementTypeInvariant::ExactConstructor(_) => Self::from_ty(tcx, *base),
+            },
             ty::RawPtr(..) => Some(Self::RawPointer),
             ty::Ref(..) => Some(Self::Reference),
             ty::Slice(..) => Some(Self::Slice),
@@ -1785,6 +1797,7 @@ impl PrimitiveType {
             | ty::UnsafeBinder(..) => None,
         }
     }
+
 
     pub(crate) fn simplified_types() -> &'static SimplifiedTypes {
         use PrimitiveType::*;

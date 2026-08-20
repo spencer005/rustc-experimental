@@ -174,10 +174,14 @@ impl<'tcx> InherentCollect<'tcx> {
         let item_span = self.tcx.def_span(id);
         let self_ty = self.tcx.type_of(id).instantiate_identity().skip_norm_wip();
         let mut self_ty = self.tcx.peel_off_free_alias_tys(self_ty);
-        // We allow impls on pattern types exactly when we allow impls on the base type.
-        // FIXME(pattern_types): Figure out the exact coherence rules we want here.
-        while let ty::Pat(base, _) = *self_ty.kind() {
-            self_ty = base;
+        loop {
+            match self.tcx.refinement_impl_head(self_ty) {
+                Some(ty::RefinementImplHead::ExactConstructor { owner, .. }) => {
+                    return self.check_def_id(id, self_ty, owner);
+                }
+                Some(ty::RefinementImplHead::Pattern { base }) => self_ty = base,
+                None => break,
+            }
         }
         match *self_ty.kind() {
             ty::Adt(def, _) => self.check_def_id(id, self_ty, def.did()),
@@ -188,7 +192,7 @@ impl<'tcx> InherentCollect<'tcx> {
             ty::Dynamic(..) => {
                 Err(self.tcx.dcx().emit_err(diagnostics::InherentDyn { span: item_span }))
             }
-            ty::Pat(_, _) => unreachable!(),
+            ty::Refined(_, _) => unreachable!(),
             ty::Bool
             | ty::Char
             | ty::Int(_)

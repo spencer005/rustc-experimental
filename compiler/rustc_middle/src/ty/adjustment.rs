@@ -104,6 +104,12 @@ pub enum Adjust {
 
     Pointer(PointerCoercion),
 
+    /// Preserve constructor evidence while refining a base enum value to its exact variant type.
+    RefinementConstruct,
+
+    /// Forget an exact constructor refinement while preserving the base representation.
+    RefinementForget,
+
     /// Take a user-type T implementing the Reborrow trait (for Mut) or the CoerceShared trait (for
     /// Not) and reborrow as `T` or `CoreceShared<U>`.
     ///

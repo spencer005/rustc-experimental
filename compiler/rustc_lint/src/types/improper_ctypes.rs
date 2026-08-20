@@ -701,6 +701,16 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
             // Empty enums are okay... although sort of useless.
             return FfiSafe;
         }
+        if !self.cx.tcx.enum_refinement_is_representation_uniform(def.did()) {
+            return FfiUnsafe {
+                ty,
+                reason: msg!(
+                    "this indexed enum does not have one uniform representation for all family arguments"
+                ),
+                help: None,
+            };
+        }
+
         // Check for a repr() attribute to specify the size of the
         // discriminant.
         if !def.repr().c() && !def.repr().transparent() && def.repr().int.is_none() {
@@ -778,11 +788,21 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
             }
 
-            // Pattern types are just extra invariants on the type that you need to uphold,
-            // but only the base type is relevant for being representable in FFI.
-            // (note: this lint was written when pattern types could only be integers constrained to ranges)
-            // (also note: the lack of ".next(ty)" on the state is on purpose)
-            ty::Pat(pat_ty, _) => self.visit_type(state, pat_ty),
+            ty::Refined(base, refinement) => {
+                match tcx.refinement_type_invariant(refinement) {
+                    ty::RefinementTypeInvariant::ScalarPattern(_) => {
+                        // Scalar pattern refinements preserve the base type's foreign ABI.
+                        self.visit_type(state, base)
+                    }
+                    ty::RefinementTypeInvariant::ExactConstructor(_) => FfiUnsafe {
+                        ty,
+                        reason: msg!(
+                            "an exact constructor type cannot be established by a foreign ABI"
+                        ),
+                        help: None,
+                    },
+                }
+            }
 
             // types which likely have a stable representation, if the target architecture defines those
             // note: before rust 1.77, 128-bit ints were not FFI-safe on x86_64

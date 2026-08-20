@@ -313,6 +313,19 @@ impl<'a, 'tcx> ThirPrinter<'a, 'tcx> {
                 self.print_expr(*source, depth_lvl + 2);
                 print_indented!(self, "}", depth_lvl);
             }
+            RefinementConstruct { source } => {
+                print_indented!(self, "RefinementConstruct {", depth_lvl);
+                print_indented!(self, "source:", depth_lvl + 1);
+                self.print_expr(*source, depth_lvl + 2);
+                print_indented!(self, "}", depth_lvl);
+            }
+
+            RefinementForget { source } => {
+                print_indented!(self, "RefinementForget {", depth_lvl);
+                print_indented!(self, "source:", depth_lvl + 1);
+                self.print_expr(*source, depth_lvl + 2);
+                print_indented!(self, "}", depth_lvl);
+            }
             PointerCoercion { cast, is_from_as_cast, source } => {
                 print_indented!(self, "Pointer {", depth_lvl);
                 print_indented!(self, format!("cast: {:?}", cast), depth_lvl + 1);

@@ -463,6 +463,7 @@ impl<'a> State<'a> {
         visibility: &ast::Visibility,
     ) {
         let (cb, ib) = self.head(visibility_qualified(visibility, "enum"));
+
         self.print_ident(ident);
         self.print_generic_params(&generics.params);
         self.print_where_clause(&generics.where_clause);
@@ -593,8 +594,20 @@ impl<'a> State<'a> {
     pub(crate) fn print_variant(&mut self, v: &ast::Variant) {
         let (cb, ib) = self.head("");
         self.print_visibility(&v.vis);
-        let generics = ast::Generics::default();
+        let generics = match &v.scheme {
+            ast::VariantSchemeSyntax::Ordinary => ast::Generics::default(),
+            ast::VariantSchemeSyntax::Refined { generics, .. } => generics.clone(),
+        };
         self.print_struct(&v.data, &generics, v.ident, v.span, false, cb, ib);
+        if let ast::VariantSchemeSyntax::Refined {
+            result: ast::VariantResult::Explicit(result),
+            ..
+        } = &v.scheme
+        {
+            self.space();
+            self.word_space("->");
+            self.print_type(result);
+        }
         if let Some(d) = &v.disr_expr {
             self.space();
             self.word_space("=");

@@ -51,6 +51,27 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Pattern<'tcx> {
         }
     }
 }
+impl<'tcx> Relate<TyCtxt<'tcx>> for ty::RefinementTypeKey<'tcx> {
+    fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
+        relation: &mut R,
+        a: Self,
+        b: Self,
+    ) -> RelateResult<'tcx, Self> {
+        let tcx = relation.cx();
+        let definition = match (*a, *b) {
+
+            (ty::RefinementDefinition::Pattern(a), ty::RefinementDefinition::Pattern(b)) => {
+                ty::RefinementDefinition::Pattern(relation.relate(a, b)?)
+            }
+            (
+                ty::RefinementDefinition::Constructor { variant_def_id: a },
+                ty::RefinementDefinition::Constructor { variant_def_id: b },
+            ) if a == b => ty::RefinementDefinition::Constructor { variant_def_id: a },
+            _ => return Err(TypeError::Mismatch),
+        };
+        Ok(tcx.intern_refinement_definition(definition))
+    }
+}
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>> {
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(

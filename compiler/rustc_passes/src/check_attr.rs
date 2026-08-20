@@ -254,6 +254,7 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
             // `#[doc]` is actually a lot more than just doc comments, so is checked below
             AttributeKind::DocComment { .. } => (),
             AttributeKind::EiiDeclaration { .. } => (),
+            AttributeKind::ExactVariants(..) => (),
             AttributeKind::ExportName { .. } => (),
             AttributeKind::ExportStable => (),
             AttributeKind::Feature(..) => (),

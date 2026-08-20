@@ -504,14 +504,13 @@ impl<'tcx> SizeSkeleton<'tcx> {
                 // there's just a single pointer, and `Err` otherwise.
                 let zero_or_ptr_variant = |i| -> Result<Option<SizeSkeleton<'tcx>>, _> {
                     let i = VariantIdx::from_usize(i);
-                    let fields = def.variant(i).fields.iter().map(|field| {
-                        SizeSkeleton::compute_inner(
-                            field.ty(tcx, args).skip_norm_wip(),
-                            tcx,
-                            typing_env,
-                            span,
-                            depth + 1,
-                        )
+                    let variant = def.variant(i);
+                    let fields = variant.fields.indices().map(|field| {
+                        let field_ty = match variant.field_ty(tcx, field, args) {
+                            Ok(field_ty) => field_ty.skip_norm_wip(),
+                            Err(_) => return Err(err),
+                        };
+                        SizeSkeleton::compute_inner(field_ty, tcx, typing_env, span, depth + 1)
                     });
                     let mut ptr = None;
                     for field in fields {
@@ -569,18 +568,18 @@ impl<'tcx> SizeSkeleton<'tcx> {
                 }
             }
 
-            ty::Pat(base, pat) => {
-                // Pattern types are always the same size as their base.
-                let base = SizeSkeleton::compute_inner(base, tcx, typing_env, span, depth + 1);
-                match *pat {
-                    ty::PatternKind::Range { .. } | ty::PatternKind::Or(_) => base,
-                    // But in the case of `!null` patterns we need to note that in the
-                    // raw pointer.
-                    ty::PatternKind::NotNull => match base? {
-                        SizeSkeleton::Known(..) => base,
-                        SizeSkeleton::Pointer { non_zero: _, tail } => {
-                            Ok(SizeSkeleton::Pointer { non_zero: true, tail })
-                        }
+            ty::Refined(base_ty, refinement) => {
+                let base = SizeSkeleton::compute_inner(base_ty, tcx, typing_env, span, depth + 1);
+                match tcx.refinement_layout_authority(refinement) {
+                    ty::RefinementLayoutAuthority::BaseRepresentation => base,
+                    ty::RefinementLayoutAuthority::ScalarPattern(pattern) => match *pattern {
+                        ty::PatternKind::Range { .. } | ty::PatternKind::Or(_) => base,
+                        ty::PatternKind::NotNull => match base? {
+                            SizeSkeleton::Known(..) => base,
+                            SizeSkeleton::Pointer { non_zero: _, tail } => {
+                                Ok(SizeSkeleton::Pointer { non_zero: true, tail })
+                            }
+                        },
                     },
                 }
             }
@@ -870,9 +869,16 @@ where
                     bug!("TyAndLayout::field({:?}): not applicable", this)
                 }
 
-                ty::Pat(base, _) => {
-                    assert_eq!(i, 0);
-                    TyMaybeWithLayout::Ty(base)
+                ty::Refined(base, refinement) => {
+                    match tcx.refinement_layout_authority(refinement) {
+                        ty::RefinementLayoutAuthority::BaseRepresentation => {
+                            field_ty_or_layout(TyAndLayout { ty: base, ..this }, cx, i)
+                        }
+                        ty::RefinementLayoutAuthority::ScalarPattern(_) => {
+                            assert_eq!(i, 0);
+                            TyMaybeWithLayout::Ty(base)
+                        }
+                    }
                 }
 
                 ty::UnsafeBinder(bound_ty) => {
@@ -1001,8 +1007,17 @@ where
                 ty::Adt(def, args) => {
                     match this.variants {
                         Variants::Single { index } => {
-                            let field = &def.variant(index).fields[FieldIdx::from_usize(i)];
-                            TyMaybeWithLayout::Ty(field.ty(tcx, args).skip_norm_wip())
+                            let field = FieldIdx::from_usize(i);
+                            let field_ty = def
+                                .variant(index)
+                                .field_ty(tcx, field, args)
+                                .unwrap_or_else(|err| {
+                                    bug!(
+                                        "layout field {field:?} of variant {index:?} for {} could not be recovered: {err:?}",
+                                        this.ty
+                                    )
+                                });
+                            TyMaybeWithLayout::Ty(field_ty.skip_norm_wip())
                         }
                         Variants::Empty => panic!("there is no field in Variants::Empty types"),
 

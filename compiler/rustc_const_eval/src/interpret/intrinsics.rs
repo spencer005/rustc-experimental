@@ -251,7 +251,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                     // Pattern types have the same number of variants as their base type.
                     // Even if we restrict e.g. which variants are valid, the variants are essentially just uninhabited.
                     // And `Result<(), !>` still has two variants according to `variant_count`.
-                    ty::Pat(base, _) => *base,
+                    ty::Refined(base, _) => *base,
                     _ => tp_ty,
                 };
                 let val = match ty.kind() {
@@ -262,7 +262,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                     ty::Alias(..) | ty::Param(_) | ty::Placeholder(_) | ty::Infer(_) => {
                         throw_inval!(TooGeneric)
                     }
-                    ty::Pat(..) => unreachable!(),
+                    ty::Refined(..) => unreachable!(),
                     ty::Bound(_, _) => bug!("bound ty during ctfe"),
                     ty::Bool
                     | ty::Char

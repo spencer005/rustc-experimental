@@ -755,11 +755,17 @@ pub trait PrettyPrinter<'tcx>: Printer<'tcx> + fmt::Write {
             ty::Int(t) => write!(self, "{}", t.name_str())?,
             ty::Uint(t) => write!(self, "{}", t.name_str())?,
             ty::Float(t) => write!(self, "{}", t.name_str())?,
-            ty::Pat(ty, pat) => {
-                write!(self, "(")?;
-                ty.print(self)?;
-                write!(self, ") is {pat:?}")?;
-            }
+            ty::Refined(base, refinement) => match self.tcx().refinement_type_identity(refinement) {
+                ty::RefinementTypeIdentity::Pattern(pattern) => {
+                    write!(self, "(")?;
+                    base.print(self)?;
+                    write!(self, ") is {pattern:?}")?;
+                }
+                ty::RefinementTypeIdentity::Constructor(variant_def_id) => {
+                    base.print(self)?;
+                    write!(self, "::{}", self.tcx().item_name(variant_def_id))?;
+                }
+            },
             ty::RawPtr(ty, mutbl) => {
                 write!(self, "*{} ", mutbl.ptr_str())?;
                 ty.print(self)?;
@@ -1822,7 +1828,7 @@ pub trait PrettyPrinter<'tcx>: Printer<'tcx> + fmt::Write {
                     " as ",
                 )?;
             }
-            ty::Pat(base_ty, pat) if self.tcx().validate_scalar_in_layout(int, ty) => {
+            ty::Refined(base_ty, pat) if self.tcx().validate_scalar_in_layout(int, ty) => {
                 self.pretty_print_const_scalar_int(int, *base_ty, print_ty)?;
                 write!(self, " is {pat:?}")?;
             }
@@ -2352,7 +2358,7 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
 
             ty::Adt(..)
             | ty::Foreign(_)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::RawPtr(..)
             | ty::Ref(..)
             | ty::FnDef(..)

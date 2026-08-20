@@ -498,8 +498,12 @@ impl<'tcx> Ty<'tcx> {
     }
 
     #[inline]
-    pub fn new_pat(tcx: TyCtxt<'tcx>, base: Ty<'tcx>, pat: ty::Pattern<'tcx>) -> Ty<'tcx> {
-        Ty::new(tcx, Pat(base, pat))
+    pub fn new_refined(
+        tcx: TyCtxt<'tcx>,
+        base: Ty<'tcx>,
+        refinement: ty::RefinementTypeKey<'tcx>,
+    ) -> Ty<'tcx> {
+        Ty::new(tcx, Refined(base, refinement))
     }
 
     #[inline]
@@ -1123,8 +1127,12 @@ impl<'tcx> rustc_type_ir::inherent::Ty<TyCtxt<'tcx>> for Ty<'tcx> {
         Ty::new_fn_ptr(interner, sig)
     }
 
-    fn new_pat(interner: TyCtxt<'tcx>, ty: Self, pat: ty::Pattern<'tcx>) -> Self {
-        Ty::new_pat(interner, ty, pat)
+    fn new_refined(
+        interner: TyCtxt<'tcx>,
+        ty: Self,
+        refinement: ty::RefinementTypeKey<'tcx>,
+    ) -> Self {
+        Ty::new_refined(interner, ty, refinement)
     }
 
     fn new_unsafe_binder(interner: TyCtxt<'tcx>, ty: ty::Binder<'tcx, Ty<'tcx>>) -> Self {
@@ -1723,6 +1731,7 @@ impl<'tcx> Ty<'tcx> {
             TyKind::Coroutine(def_id, args) => {
                 Some(args.as_coroutine().discriminant_for_variant(*def_id, tcx, variant_index))
             }
+            TyKind::Refined(base, _) => base.discriminant_for_variant(tcx, variant_index),
             TyKind::UnsafeBinder(bound_ty) => tcx
                 .instantiate_bound_regions_with_erased((*bound_ty).into())
                 .discriminant_for_variant(tcx, variant_index),
@@ -1748,7 +1757,7 @@ impl<'tcx> Ty<'tcx> {
                 )
             }
 
-            ty::Pat(ty, _) => ty.discriminant_ty(tcx),
+            ty::Refined(ty, _) => ty.discriminant_ty(tcx),
             ty::UnsafeBinder(bound_ty) => {
                 tcx.instantiate_bound_regions_with_erased((*bound_ty).into()).discriminant_ty(tcx)
             }
@@ -1834,7 +1843,7 @@ impl<'tcx> Ty<'tcx> {
             ty::UnsafeBinder(_) => unimplemented!("FIXME(unsafe_binder)"),
 
             ty::Infer(ty::TyVar(_))
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Bound(..)
             | ty::Placeholder(..)
             | ty::Infer(ty::FreshTy(_) | ty::FreshIntTy(_) | ty::FreshFloatTy(_)) => bug!(
@@ -1998,7 +2007,7 @@ impl<'tcx> Ty<'tcx> {
             | ty::Coroutine(..)
             | ty::CoroutineWitness(..)
             | ty::Array(..)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Closure(..)
             | ty::CoroutineClosure(..)
             | ty::Never
@@ -2059,7 +2068,7 @@ impl<'tcx> Ty<'tcx> {
                 field_tys.len() <= 3 && field_tys.iter().all(Self::is_trivially_pure_clone_copy)
             }
 
-            ty::Pat(ty, _) => ty.is_trivially_pure_clone_copy(),
+            ty::Refined(ty, _) => ty.is_trivially_pure_clone_copy(),
 
             // Sometimes traits aren't implemented for every ABI or arity,
             // because we can't be generic over everything yet.
@@ -2121,7 +2130,7 @@ impl<'tcx> Ty<'tcx> {
             | ty::Tuple(_)
             | ty::Array(..)
             | ty::Foreign(_)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::FnDef(..)
             | ty::UnsafeBinder(..)
             | ty::Dynamic(..)

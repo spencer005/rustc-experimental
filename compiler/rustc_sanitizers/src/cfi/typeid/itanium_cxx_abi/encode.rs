@@ -244,7 +244,7 @@ fn encode_const_value<'tcx>(
         ty::Float(..)
         | ty::Never
         | ty::Foreign(..)
-        | ty::Pat(..)
+        | ty::Refined(..)
         | ty::FnDef(..)
         | ty::FnPtr(..)
         | ty::RawPtr(..)
@@ -522,7 +522,7 @@ pub(crate) fn encode_ty<'tcx>(
             typeid.push_str(&s);
         }
 
-        ty::Pat(ty0, pat) => {
+        ty::Refined(ty0, pat) => {
             // u3patI<element-type><pattern>E as vendor extended type
             let mut s = String::from("u3patI");
             s.push_str(&encode_ty(tcx, *ty0, dict, options));

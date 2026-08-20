@@ -24,8 +24,10 @@ use rustc_type_ir::solve::AdtDestructorKind;
 use tracing::{debug, info, trace};
 
 use super::{
-    AsyncDestructor, Destructor, FieldDef, GenericClauses, Ty, TyCtxt, VariantDef, VariantDiscr,
+    AsyncDestructor, Destructor, FieldDef, GenericArg, GenericArgsRef, GenericClauses,
+    GenericParamDef, Ty, TyCtxt, Unnormalized, VariantDef, VariantDiscr,
 };
+
 use crate::mir::interpret::ErrorHandled;
 use crate::ty::util::{Discr, IntTypeExt};
 use crate::ty::{self, ConstKind};
@@ -69,6 +71,177 @@ bitflags::bitflags! {
     }
 }
 rustc_data_structures::external_bitflags_debug! { AdtFlags }
+#[derive(Clone, Copy, Debug, StableHash, TyEncodable, TyDecodable)]
+pub struct VariantFieldTemplate<'tcx> {
+    pub def_id: DefId,
+    pub ty: Ty<'tcx>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, StableHash, TyEncodable, TyDecodable)]
+pub enum VariantResultProjection {
+    GenericArg(u32),
+    TupleElement(u32),
+    ArrayElement,
+    ArrayLength,
+    SliceElement,
+    RawPointee,
+    RefRegion,
+    RefPointee,
+}
+
+#[derive(Clone, Debug, StableHash, TyEncodable, TyDecodable)]
+pub struct VariantBinderRecovery {
+    pub binder_def_id: DefId,
+    pub path: Vec<VariantResultProjection>,
+}
+#[derive(Clone, Debug, StableHash, TyEncodable, TyDecodable)]
+pub struct VariantBinderScheme {
+    pub family: Vec<GenericParamDef>,
+    pub local: Vec<GenericParamDef>,
+}
+#[derive(Clone, Copy, Debug, StableHash, TyEncodable, TyDecodable)]
+pub struct VariantArgs<'tcx> {
+    pub family: GenericArgsRef<'tcx>,
+    pub local: GenericArgsRef<'tcx>,
+}
+
+
+
+
+#[derive(Clone, Debug, StableHash, TyEncodable, TyDecodable)]
+pub struct RefinedVariantScheme<'tcx> {
+    pub variant_def_id: DefId,
+    pub family_def_id: DefId,
+    pub binders: VariantBinderScheme,
+    pub fields: Vec<VariantFieldTemplate<'tcx>>,
+    pub result: Ty<'tcx>,
+    pub recoveries: Vec<VariantBinderRecovery>,
+    pub construction_clauses: GenericClauses<'tcx>,
+}
+
+#[derive(Clone, Debug, StableHash, TyEncodable, TyDecodable)]
+pub enum VariantScheme<'tcx> {
+    Ordinary,
+    Refined(RefinedVariantScheme<'tcx>),
+    Invalid(ErrorGuaranteed),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RecoveredVariantArgs<'tcx> {
+    args: GenericArgsRef<'tcx>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct VariantArgRecoveryError {
+    pub binder_def_id: DefId,
+    pub projection_index: u32,
+    pub projection: VariantResultProjection,
+}
+
+impl<'tcx> RefinedVariantScheme<'tcx> {
+    fn all_binders(&self) -> impl Iterator<Item = &GenericParamDef> {
+        self.binders.family.iter().chain(&self.binders.local)
+    }
+
+    fn project_result_arg(
+        &self,
+        family_args: GenericArgsRef<'tcx>,
+        current: Option<GenericArg<'tcx>>,
+        projection: VariantResultProjection,
+    ) -> Option<GenericArg<'tcx>> {
+        match projection {
+            VariantResultProjection::GenericArg(index) => match current {
+                None => family_args.get(index as usize).copied(),
+                Some(arg) => match *arg.as_type()?.kind() {
+                    ty::Adt(_, args) => args.get(index as usize).copied(),
+                    _ => None,
+                },
+            },
+            VariantResultProjection::TupleElement(index) => match *current?.as_type()?.kind() {
+                ty::Tuple(types) => types.get(index as usize).copied().map(Into::into),
+                _ => None,
+            },
+            VariantResultProjection::ArrayElement => match *current?.as_type()?.kind() {
+                ty::Array(element, _) => Some(element.into()),
+                _ => None,
+            },
+            VariantResultProjection::ArrayLength => match *current?.as_type()?.kind() {
+                ty::Array(_, length) => Some(length.into()),
+                _ => None,
+            },
+            VariantResultProjection::SliceElement => match *current?.as_type()?.kind() {
+                ty::Slice(element) => Some(element.into()),
+                _ => None,
+            },
+            VariantResultProjection::RawPointee => match *current?.as_type()?.kind() {
+                ty::RawPtr(pointee, _) => Some(pointee.into()),
+                _ => None,
+            },
+            VariantResultProjection::RefRegion => match *current?.as_type()?.kind() {
+                ty::Ref(region, _, _) => Some(region.into()),
+                _ => None,
+            },
+            VariantResultProjection::RefPointee => match *current?.as_type()?.kind() {
+                ty::Ref(_, pointee, _) => Some(pointee.into()),
+                _ => None,
+            },
+        }
+    }
+
+    pub fn recover_representation_args(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        family_args: GenericArgsRef<'tcx>,
+    ) -> Result<RecoveredVariantArgs<'tcx>, VariantArgRecoveryError> {
+        let mut args = ty::GenericArgs::identity_for_item(tcx, self.variant_def_id).to_vec();
+
+        for recovery in &self.recoveries {
+            let param = self
+                .all_binders()
+                .find(|param| param.def_id == recovery.binder_def_id)
+                .unwrap_or_else(|| {
+                    bug!(
+                        "recovery for non-scheme binder {:?} in {:?}",
+                        recovery.binder_def_id,
+                        self.variant_def_id
+                    )
+                });
+            let mut current = None;
+            for (projection_index, &projection) in recovery.path.iter().enumerate() {
+                current = self.project_result_arg(family_args, current, projection);
+                if current.is_none() {
+                    return Err(VariantArgRecoveryError {
+                        binder_def_id: recovery.binder_def_id,
+                        projection_index: projection_index as u32,
+                        projection,
+                    });
+                }
+            }
+            let recovered = current.unwrap_or_else(|| {
+                bug!(
+                    "empty recovery path for binder {:?} in {:?}",
+                    recovery.binder_def_id,
+                    self.variant_def_id
+                )
+            });
+            args[param.index as usize] = recovered;
+        }
+
+        Ok(RecoveredVariantArgs { args: tcx.mk_args(&args) })
+    }
+
+    pub fn field_ty(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        args: RecoveredVariantArgs<'tcx>,
+        field: FieldIdx,
+    ) -> Unnormalized<'tcx, Ty<'tcx>> {
+        let template = self.fields.get(field.index()).unwrap_or_else(|| {
+            bug!("field {field:?} out of range for refined variant {:?}", self.variant_def_id)
+        });
+        ty::EarlyBinder::bind(tcx, template.ty).instantiate(tcx, args.args)
+    }
+}
+
 
 /// The definition of a user-defined type, e.g., a `struct`, `enum`, or `union`.
 ///

@@ -1928,7 +1928,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
                     | ty::Foreign(_)
                     | ty::Str
                     | ty::Array(_, _)
-                    | ty::Pat(_, _)
+                    | ty::Refined(_, _)
                     | ty::Slice(_)
                     | ty::FnDef(_, _)
                     | ty::FnPtr(..)
@@ -1972,7 +1972,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
                     | ty::Foreign(_)
                     | ty::Str
                     | ty::Array(_, _)
-                    | ty::Pat(_, _)
+                    | ty::Refined(_, _)
                     | ty::Slice(_)
                     | ty::RawPtr(_, _)
                     | ty::Ref(_, _, _)

@@ -126,7 +126,7 @@ pub trait Ty<I: Interner<Ty = Self>>:
 
     fn new_fn_ptr(interner: I, sig: ty::Binder<I, ty::FnSig<I>>) -> Self;
 
-    fn new_pat(interner: I, ty: Self, pat: I::Pat) -> Self;
+    fn new_refined(interner: I, ty: Self, refinement: I::RefinementTypeKey) -> Self;
 
     fn new_unsafe_binder(interner: I, ty: ty::Binder<I, I::Ty>) -> Self;
 
@@ -182,7 +182,8 @@ pub trait Ty<I: Interner<Ty = Self>>:
             | ty::Adt(_, _)
             | ty::Foreign(_)
             | ty::Array(_, _)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
+
             | ty::RawPtr(_, _)
             | ty::Ref(_, _, _)
             | ty::FnDef(_, _)

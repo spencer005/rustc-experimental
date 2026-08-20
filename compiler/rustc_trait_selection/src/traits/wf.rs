@@ -768,9 +768,14 @@ impl<'a, 'tcx> TypeVisitor<TyCtxt<'tcx>> for WfPredicates<'a, 'tcx> {
                 ));
             }
 
-            ty::Pat(base_ty, pat) => {
+            ty::Refined(base_ty, refinement) => {
                 self.require_sized(base_ty, ObligationCauseCode::Misc);
-                self.add_wf_preds_for_pat_ty(base_ty, pat);
+                match tcx.refinement_type_invariant(refinement) {
+                    ty::RefinementTypeInvariant::ScalarPattern(pattern) => {
+                        self.add_wf_preds_for_pat_ty(base_ty, pattern);
+                    }
+                    ty::RefinementTypeInvariant::ExactConstructor(_) => {}
+                }
             }
 
             ty::Tuple(tys) => {

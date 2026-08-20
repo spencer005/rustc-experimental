@@ -986,6 +986,17 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         self.visit_nested_body(body_id)
     }
 
+    fn visit_variant(&mut self, variant: &'tcx hir::Variant<'tcx>) {
+        match variant.scheme {
+            hir::VariantSchemeSyntax::Ordinary => intravisit::walk_variant(self, variant),
+            hir::VariantSchemeSyntax::Refined { generics, .. } => {
+                self.visit_early(variant.hir_id, generics, |this| {
+                    intravisit::walk_variant(this, variant)
+                });
+            }
+        }
+    }
+
     fn visit_generics(&mut self, generics: &'tcx hir::Generics<'tcx>) {
         let scope = Scope::TraitRefBoundary { s: self.scope };
         self.with(scope, |this| {
@@ -1098,7 +1109,21 @@ fn object_lifetime_default(tcx: TyCtxt<'_>, param_def_id: LocalDefId) -> ObjectL
         hir::Node::GenericParam(param) => match param.source {
             hir::GenericParamSource::Generics => match param.kind {
                 GenericParamKind::Type { .. } => {
-                    Ok((tcx.hir_get_generics(tcx.local_parent(param_def_id)).unwrap(), &[][..]))
+                    let parent_def_id = tcx.local_parent(param_def_id);
+                    let generics = match tcx.hir_node_by_def_id(parent_def_id) {
+                        hir::Node::Variant(hir::Variant {
+                            scheme: hir::VariantSchemeSyntax::Refined { generics, .. },
+                            ..
+                        }) => generics,
+                        _ => tcx.hir_get_generics(parent_def_id).unwrap_or_else(|| {
+                            bug!(
+                                "type parameter {:?} has no generic owner at {:?}",
+                                param_def_id,
+                                parent_def_id
+                            )
+                        }),
+                    };
+                    Ok((generics, &[][..]))
                 }
                 _ => Err(()),
             },

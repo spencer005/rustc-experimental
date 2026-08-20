@@ -38,6 +38,7 @@ use crate::attributes::diagnostic::on_unknown::*;
 use crate::attributes::diagnostic::on_unmatched_args::*;
 use crate::attributes::diagnostic::opaque::*;
 use crate::attributes::doc::*;
+use crate::attributes::exact_variants::*;
 use crate::attributes::dummy::*;
 use crate::attributes::inline::*;
 use crate::attributes::instruction_set::*;
@@ -267,6 +268,8 @@ attribute_parsers!(
         Single<WithoutArgs<ConstContinueParser>>,
         Single<WithoutArgs<CoroutineParser>>,
         Single<WithoutArgs<DefaultLibAllocatorParser>>,
+        Single<WithoutArgs<ExactVariantsParser>>,
+
         Single<WithoutArgs<ExportStableParser>>,
         Single<WithoutArgs<FfiConstParser>>,
         Single<WithoutArgs<FfiPureParser>>,

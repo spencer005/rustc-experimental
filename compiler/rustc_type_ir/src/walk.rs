@@ -88,10 +88,11 @@ fn push_inner<I: Interner>(stack: &mut TypeWalkerStack<I>, parent: I::GenericArg
             | ty::Bound(..)
             | ty::Foreign(..) => {}
 
-            ty::Pat(ty, pat) => {
-                push_ty_pat::<I>(stack, pat);
+            ty::Refined(ty, refinement) => {
+                push_refinement::<I>(stack, refinement);
                 stack.push(ty.into());
             }
+
             ty::Array(ty, len) => {
                 stack.push(len.into());
                 stack.push(ty.into());
@@ -166,6 +167,13 @@ fn push_inner<I: Interner>(stack: &mut TypeWalkerStack<I>, parent: I::GenericArg
                 stack.extend(ct.args.iter().rev());
             }
         },
+    }
+}
+
+fn push_refinement<I: Interner>(stack: &mut TypeWalkerStack<I>, refinement: I::RefinementTypeKey) {
+    match refinement.kind() {
+        ty::RefinementDefinition::Pattern(pattern) => push_ty_pat::<I>(stack, pattern),
+        ty::RefinementDefinition::Constructor { .. } => {}
     }
 }
 

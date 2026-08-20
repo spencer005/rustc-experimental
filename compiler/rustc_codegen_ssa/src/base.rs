@@ -27,7 +27,7 @@ use rustc_middle::mir::{BinOp, ConstValue};
 use rustc_middle::mono::{CodegenUnit, CodegenUnitNameBuilder, MonoItem, MonoItemPartitions};
 use rustc_middle::query::Providers;
 use rustc_middle::ty::layout::{HasTyCtxt, HasTypingEnv, LayoutOf, TyAndLayout};
-use rustc_middle::ty::{self, Instance, PatternKind, Ty, TyCtxt, UintTy, Unnormalized};
+use rustc_middle::ty::{self, Instance, Ty, TyCtxt, UintTy, Unnormalized};
 use rustc_middle::{bug, span_bug};
 use rustc_session::Session;
 use rustc_session::config::{self, CrateType, EntryFnType};
@@ -230,7 +230,7 @@ pub(crate) fn unsize_ptr<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>>(
 ) -> (Bx::Value, Bx::Value) {
     debug!("unsize_ptr: {:?} => {:?}", src_ty, dst_ty);
     match (src_ty.kind(), dst_ty.kind()) {
-        (&ty::Pat(a, _), &ty::Pat(b, _)) => unsize_ptr(bx, src, a, b, old_info),
+        (&ty::Refined(a, _), &ty::Refined(b, _)) => unsize_ptr(bx, src, a, b, old_info),
         (&ty::Ref(_, a, _), &ty::Ref(_, b, _) | &ty::RawPtr(b, _))
         | (&ty::RawPtr(a, _), &ty::RawPtr(b, _)) => {
             assert_eq!(bx.cx().type_is_sized(a), old_info.is_none());
@@ -276,8 +276,10 @@ pub(crate) fn coerce_unsized_into<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>>(
     let src_ty = src.layout.ty;
     let dst_ty = dst.layout.ty;
     match (src_ty.kind(), dst_ty.kind()) {
-        (&ty::Pat(s, sp), &ty::Pat(d, dp))
-            if let (PatternKind::NotNull, PatternKind::NotNull) = (*sp, *dp) =>
+        (&ty::Refined(s, src_refinement), &ty::Refined(d, dst_refinement))
+            if src_refinement == dst_refinement
+                && bx.tcx().refinement_unsize_kind(src_refinement)
+                    == ty::RefinementUnsizeKind::TransparentBase =>
         {
             let src = src.project_type(bx, s);
             let dst = dst.project_type(bx, d);

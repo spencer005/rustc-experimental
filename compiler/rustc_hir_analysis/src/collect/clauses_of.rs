@@ -28,6 +28,12 @@ use crate::hir_ty_lowering::{
 /// inferred constraints concerning which regions outlive other regions.
 #[instrument(level = "debug", skip(tcx))]
 pub(super) fn clauses_of(tcx: TyCtxt<'_>, def_id: DefId) -> ty::GenericClauses<'_> {
+    if def_id.is_local()
+        && tcx.def_kind(def_id) == DefKind::Variant
+        && let ty::VariantScheme::Refined(scheme) = tcx.variant_scheme(def_id)
+    {
+        return scheme.construction_clauses;
+    }
     let mut result = tcx.explicit_clauses_of(def_id);
     debug!("clauses_of: explicit_clauses_of({:?}) = {:?}", def_id, result);
 

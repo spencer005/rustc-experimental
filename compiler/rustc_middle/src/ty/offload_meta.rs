@@ -130,7 +130,7 @@ impl MappingFlags {
 
             ty::Slice(_) | ty::Str | ty::Dynamic(_, _) => MappingFlags::TO | MappingFlags::FROM,
 
-            ty::Foreign(_) | ty::Pat(_, _) | ty::UnsafeBinder(_) => {
+            ty::Foreign(_) | ty::Refined(_, _) | ty::UnsafeBinder(_) => {
                 MappingFlags::TO | MappingFlags::FROM
             }
 

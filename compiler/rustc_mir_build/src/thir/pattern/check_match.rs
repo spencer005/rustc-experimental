@@ -317,6 +317,9 @@ impl<'p, 'tcx> MatchVisitor<'p, 'tcx> {
             | Cast { source }
             | Use { source }
             | PointerCoercion { source, .. }
+            | RefinementConstruct { source }
+
+            | RefinementForget { source }
             | PlaceTypeAscription { source, .. }
             | ValueTypeAscription { source, .. }
             | PlaceUnwrapUnsafeBinder { source }

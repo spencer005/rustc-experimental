@@ -1,0 +1,8 @@
+error: constructor result must be an application of its enum family `Expr`; found `Other<U>`; use `Expr<...>` (or omit `-> ...` for the default family application)
+  --> $DIR/invalid-result-family.rs:9:20
+   |
+LL |     Wrong<U>(U) -> Other<U>,
+   |                    ^^^^^^^^
+
+error: aborting due to 1 previous error
+

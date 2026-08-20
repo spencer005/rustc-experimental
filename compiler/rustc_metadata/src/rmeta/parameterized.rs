@@ -128,6 +128,8 @@ trivially_parameterized_over_tcx! {
     rustc_middle::ty::OriginRequirement,
     rustc_middle::ty::TraitDef,
     rustc_middle::ty::Variance,
+    rustc_middle::ty::VariantBinderScheme,
+
     rustc_middle::ty::Visibility<DefIndex>,
     rustc_middle::ty::adjustment::CoerceUnsizedInfo,
     rustc_middle::ty::fast_reject::SimplifiedType,
@@ -174,5 +176,6 @@ parameterized_over_tcx! {
     rustc_middle::ty::ImplTraitHeader,
     rustc_middle::ty::TraitRef,
     rustc_middle::ty::Ty,
+    rustc_middle::ty::VariantScheme,
     // tidy-alphabetical-end
 }

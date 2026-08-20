@@ -1,0 +1,25 @@
+error[E0308]: constructor result is incompatible with the family arguments on this path
+  --> $DIR/constructor-path-family-mismatch.rs:16:13
+   |
+LL |     let _ = Pair::<(i32, bool)>::Pair::<bool, i32>;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Pair<(i32, bool)>`, found `Pair<(bool, i32)>`
+   |
+   = note: expected enum `Pair<(i32, bool)>`
+              found enum `Pair<(bool, i32)>`
+   = note: this constructor produces `Pair<(bool, i32)>`
+   = help: use family arguments compatible with the constructor result, or omit them and let the result be inferred
+
+error[E0308]: constructor result is incompatible with the family arguments on this path
+  --> $DIR/constructor-path-family-mismatch.rs:19:13
+   |
+LL |     let _ = Lit::<bool>::Int;
+   |             ^^^^^^^^^^^^^^^^ expected `Lit<bool>`, found `Lit<i32>`
+   |
+   = note: expected enum `Lit<bool>`
+              found enum `Lit<i32>`
+   = note: this constructor produces `Lit<i32>`
+   = help: use family arguments compatible with the constructor result, or omit them and let the result be inferred
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0308`.

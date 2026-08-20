@@ -1504,6 +1504,16 @@ pub enum CastKind {
     /// Well-formedness: The input type must be a pointer type or a newtype around one (e.g.
     /// `NonNull`). The output type must be a raw pointer.
     BoxDerefTransmute,
+    /// Refine a constructor-produced enum family value to the exact constructor type.
+    ///
+    /// This is proof-producing and representation-preserving. The target exact type identifies the
+    /// constructor witness established by the source constructor expression.
+    RefinementConstruct,
+    /// Forget an exact constructor refinement while preserving the base representation.
+    ///
+    /// This is well-formed only when `TyCtxt::refinement_conversion` admits the source-to-target
+    /// conversion as `ForgetExactConstructor`.
+    RefinementForget,
 
     /// A `Subtype` cast is applied to any [`StatementKind::Assign`] where
     /// type of lvalue doesn't match the type of rvalue, the primary goal is making subtyping

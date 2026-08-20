@@ -1,0 +1,18 @@
+error: explicit impl of `Capability` for an exact constructor type is not permitted
+  --> $DIR/exact-auto-trait-impl.rs:14:1
+   |
+LL | impl Capability for State<i32>::A {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: exact constructor refinements use the enum family's destruction and compiler-derived structural capabilities
+
+error: explicit impl of `Capability` for an exact constructor type is not permitted
+  --> $DIR/exact-auto-trait-impl.rs:17:1
+   |
+LL | impl !Capability for State<i32>::B {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: exact constructor refinements use the enum family's destruction and compiler-derived structural capabilities
+
+error: aborting due to 2 previous errors
+

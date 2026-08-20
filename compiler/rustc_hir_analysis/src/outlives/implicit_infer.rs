@@ -1,12 +1,34 @@
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
+use rustc_hir::{self as hir, Node};
 use rustc_middle::ty::{self, GenericArg, GenericArgKind, Ty, TyCtxt};
 use rustc_span::Span;
 use tracing::debug;
 
 use super::explicit::ExplicitClausesMap;
 use super::utils::*;
+
+fn infer_variant_field_clauses<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    variant: &ty::VariantDef,
+    global_inferred_outlives: &FxIndexMap<DefId, ty::EarlyBinder<'tcx, RequiredClauses<'tcx>>>,
+    required_clauses: &mut RequiredClauses<'tcx>,
+    explicit_map: &mut ExplicitClausesMap<'tcx>,
+) {
+    for field_def in &variant.fields {
+        let field_ty = tcx.type_of(field_def.did).instantiate_identity().skip_norm_wip();
+        let field_span = tcx.def_span(field_def.did);
+        insert_required_clauses_to_be_wf(
+            tcx,
+            field_ty,
+            field_span,
+            global_inferred_outlives,
+            required_clauses,
+            explicit_map,
+        );
+    }
+}
 
 /// Infer outlives-clauses for the items in the local crate.
 pub(super) fn infer_clauses(
@@ -34,25 +56,46 @@ pub(super) fn infer_clauses(
                 DefKind::Union | DefKind::Enum | DefKind::Struct => {
                     let adt_def = tcx.adt_def(item_did.to_def_id());
 
-                    // Iterate over all fields in item_did
-                    for field_def in adt_def.all_fields() {
-                        // Calculating the clause requirements necessary
-                        // for item_did.
-                        //
-                        // For field of type &'a T (reference) or Adt
-                        // (struct/enum/union) there will be outlive
-                        // requirements for adt_def.
-                        let field_ty =
-                            tcx.type_of(field_def.did).instantiate_identity().skip_norm_wip();
-                        let field_span = tcx.def_span(field_def.did);
-                        insert_required_clauses_to_be_wf(
-                            tcx,
-                            field_ty,
-                            field_span,
-                            &global_inferred_outlives,
-                            &mut item_required_clauses,
-                            &mut explicit_map,
-                        );
+                    for variant in adt_def.variants() {
+                        let refined_variant = variant.def_id.as_local().filter(|def_id| {
+                            matches!(
+                                tcx.hir_node_by_def_id(*def_id),
+                                Node::Variant(hir::Variant {
+                                    scheme: hir::VariantSchemeSyntax::Refined { .. },
+                                    ..
+                                })
+                            )
+                        });
+
+
+                        if let Some(variant_def_id) = refined_variant {
+                            let mut variant_required_clauses = RequiredClauses::default();
+                            infer_variant_field_clauses(
+                                tcx,
+                                variant,
+                                &global_inferred_outlives,
+                                &mut variant_required_clauses,
+                                &mut explicit_map,
+                            );
+                            let previous_len = global_inferred_outlives
+                                .get(&variant_def_id.to_def_id())
+                                .map_or(0, |c| c.as_ref().skip_binder().len());
+                            if variant_required_clauses.len() > previous_len {
+                                clauses_added.push(variant_def_id);
+                                global_inferred_outlives.insert(
+                                    variant_def_id.to_def_id(),
+                                    ty::EarlyBinder::bind_iter(variant_required_clauses),
+                                );
+                            }
+                        } else {
+                            infer_variant_field_clauses(
+                                tcx,
+                                variant,
+                                &global_inferred_outlives,
+                                &mut item_required_clauses,
+                                &mut explicit_map,
+                            );
+                        }
                     }
                 }
 
@@ -80,7 +123,7 @@ pub(super) fn infer_clauses(
                 .get(&item_did.to_def_id())
                 .map_or(0, |c| c.as_ref().skip_binder().len());
             if item_required_clauses.len() > item_clauses_len {
-                clauses_added.push(item_did);
+                clauses_added.push(item_did.def_id);
                 global_inferred_outlives.insert(
                     item_did.to_def_id(),
                     ty::EarlyBinder::bind_iter(item_required_clauses),

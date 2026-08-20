@@ -1,0 +1,21 @@
+use derive_where::derive_where;
+#[cfg(feature = "nightly")]
+use rustc_macros::{Decodable_NoContext, Encodable_NoContext, StableHash_NoContext};
+use rustc_type_ir_macros::{GenericTypeVisitable, TypeFoldable_Generic, TypeVisitable_Generic};
+
+use crate::Interner;
+
+#[derive_where(Clone, Copy, Debug, Hash, PartialEq; I: Interner)]
+#[derive(TypeVisitable_Generic, GenericTypeVisitable, TypeFoldable_Generic)]
+
+#[cfg_attr(
+    feature = "nightly",
+    derive(Decodable_NoContext, Encodable_NoContext, StableHash_NoContext)
+)]
+pub enum RefinementDefinition<I: Interner> {
+    Pattern(I::Pat),
+    Constructor { variant_def_id: I::DefId },
+}
+
+impl<I: Interner> Eq for RefinementDefinition<I> {}
+

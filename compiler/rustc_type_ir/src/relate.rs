@@ -531,11 +531,12 @@ pub fn structurally_relate_tys<I: Interner, R: TypeRelation<I>>(
             Ok(Ty::new_alias(cx, is_rigid_a, alias_ty))
         }
 
-        (ty::Pat(a_ty, a_pat), ty::Pat(b_ty, b_pat)) => {
+        (ty::Refined(a_ty, a_refinement), ty::Refined(b_ty, b_refinement)) => {
             let ty = relation.relate(a_ty, b_ty)?;
-            let pat = relation.relate(a_pat, b_pat)?;
-            Ok(Ty::new_pat(cx, ty, pat))
+            let refinement = relation.relate(a_refinement, b_refinement)?;
+            Ok(Ty::new_refined(cx, ty, refinement))
         }
+
 
         (ty::UnsafeBinder(a_binder), ty::UnsafeBinder(b_binder)) => {
             Ok(Ty::new_unsafe_binder(cx, relation.binders(*a_binder, *b_binder)?))

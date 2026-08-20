@@ -898,6 +898,8 @@ symbols! {
         ergonomic_clones,
         ermsb_target_feature,
         exact_div,
+        exact_variants,
+
         except,
         exception,
         exception_handling: "exception-handling",
@@ -1684,6 +1686,8 @@ symbols! {
         ref_unwind_safe_trait,
         reference,
         reflect,
+        refined,
+        refined_enums,
         reg,
         reg16,
         reg32,

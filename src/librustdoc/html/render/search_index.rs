@@ -2064,7 +2064,8 @@ fn get_index_type_id(
             }
         }
         // Not supported yet
-        clean::Type::Pat(..)
+        clean::Type::Refined(..)
+
         | clean::Type::FieldOf(..)
         | clean::Generic(_)
         | clean::SelfTy

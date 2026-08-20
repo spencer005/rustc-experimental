@@ -117,7 +117,8 @@ pub(crate) fn type_check<'tcx>(
     if infcx.tcx.sess.opts.unstable_opts.origin_lifetimes {
         let def_id = body.source.def_id().expect_local();
         if infcx.tcx.generics_of(def_id).own_origin_lifetime_count() != 0
-            && let ty::OriginContractAnalysis::Unrepresentable(error) = *infcx.tcx.origin_contract(def_id.to_def_id())
+            && let ty::OriginContractAnalysis::Unrepresentable(error) =
+                *infcx.tcx.origin_contract(def_id.to_def_id())
         {
             let message = match error.kind {
                 ty::OriginContractErrorKind::UnrepresentableValue => {
@@ -133,7 +134,6 @@ pub(crate) fn type_check<'tcx>(
             root_cx.dcx().span_err(error.span, message);
         }
     }
-
 
     let CreateResult {
         universal_region_relations,
@@ -241,6 +241,7 @@ fn mirbug(tcx: TyCtxt<'_>, span: Span, msg: String) {
 
 enum FieldAccessError {
     OutOfRange { field_count: usize },
+    Refined(ty::VariantFieldTyError),
 }
 
 /// The MIR type checker. Visits the MIR and enforces all the
@@ -634,7 +635,8 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                 // though.
                 let category = match place.as_local() {
                     Some(RETURN_PLACE) => {
-                        let defining_ty = &self.universal_region_relations.universal_regions.defining_ty;
+                        let defining_ty =
+                            &self.universal_region_relations.universal_regions.defining_ty;
                         if defining_ty.is_const() {
                             if tcx.is_static(defining_ty.def_id()) {
                                 ConstraintCategory::UseAsStatic
@@ -870,11 +872,12 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                 if self.infcx.tcx.sess.opts.unstable_opts.origin_lifetimes
                     && let ty::FnDef(def_id, fn_args) = *func_ty.kind()
                     && tcx.generics_of(def_id).own_origin_lifetime_count() != 0
-                    && let ty::OriginContractAnalysis::Contract(contract) = *tcx.origin_contract(def_id)
+                    && let ty::OriginContractAnalysis::Contract(contract) =
+                        *tcx.origin_contract(def_id)
                 {
-                    let fn_args = fn_args
-                        .no_bound_vars()
-                        .unwrap_or_else(|| bug!("function item arguments unexpectedly contain bound variables"));
+                    let fn_args = fn_args.no_bound_vars().unwrap_or_else(|| {
+                        bug!("function item arguments unexpectedly contain bound variables")
+                    });
                     let generics = tcx.generics_of(def_id);
                     let region_for_param = |param_def_id| {
                         if let Some(index) = generics.param_def_id_to_index(tcx, param_def_id) {
@@ -892,14 +895,10 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                         let target = region_for_param(requirement.target().def_id()).unwrap_or_else(|| {
                             bug!("origin contract target is not present in instantiated call signature")
                         });
-                        let source = self
-                            .universal_region_relations
-                            .universal_regions
-                            .to_region_vid(source);
-                        let target = self
-                            .universal_region_relations
-                            .universal_regions
-                            .to_region_vid(target);
+                        let source =
+                            self.universal_region_relations.universal_regions.to_region_vid(source);
+                        let target =
+                            self.universal_region_relations.universal_regions.to_region_vid(target);
                         self.constraints.outlives_constraints.push(OutlivesConstraint {
                             sup: source,
                             sub: target,
@@ -1665,18 +1664,74 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                         }
                     }
                     CastKind::Transmute => {
-                        let ty_from = op.ty(self.body, tcx);
-                        match ty_from.kind() {
-                            ty::Pat(base, _) if base == ty => {}
+                        let source = op.ty(self.body, tcx);
+                        match *source.kind() {
+                            ty::Refined(base, refinement)
+                                if base == *ty
+                                    && matches!(
+                                        tcx.refinement_type_invariant(refinement),
+                                        ty::RefinementTypeInvariant::ScalarPattern(_)
+                                    ) => {}
                             _ => span_mirbug!(
                                 self,
                                 rvalue,
-                                "Unexpected CastKind::Transmute {ty_from:?} -> {ty:?}, which is not permitted in Analysis MIR",
+                                "unexpected CastKind::Transmute {source:?} -> {ty:?} in analysis MIR",
                             ),
                         }
                     }
                     CastKind::Subtype | CastKind::BoxDerefTransmute => {
                         bug!("CastKind::{cast_kind:?} shouldn't exist in borrowck")
+                    }
+                    CastKind::RefinementConstruct => {
+                        let source = op.ty(self.body, tcx);
+                        if tcx.refinement_construction_variant(source, *ty).is_none() {
+                            span_mirbug!(
+                                self,
+                                rvalue,
+                                "invalid exact-constructor refinement construction cast: {:?} -> {:?}",
+                                source,
+                                ty,
+                            );
+                        }
+                    }
+
+                    CastKind::RefinementForget => {
+                        let source = op.ty(self.body, tcx);
+                        match tcx.refinement_conversion(source, *ty) {
+                            Some(ty::RefinementConversion::ForgetExactConstructor) => {}
+                            Some(ty::RefinementConversion::ForgetSharedExactConstructor {
+                                relation_source,
+                            }) => {
+                                if let Err(terr) = self.sub_types(
+                                    relation_source,
+                                    *ty,
+                                    location.to_locations(),
+                                    ConstraintCategory::Cast {
+                                        is_raw_ptr_dyn_type_cast: false,
+                                        is_implicit_coercion: true,
+                                        unsize_to: None,
+                                    },
+                                ) {
+                                    span_mirbug!(
+                                        self,
+                                        rvalue,
+                                        "invalid shared exact-constructor refinement forgetting cast: {:?} -> {:?}: {:?}",
+                                        source,
+                                        ty,
+                                        terr,
+                                    );
+                                }
+                            }
+                            Some(ty::RefinementConversion::Identity) | None => {
+                                span_mirbug!(
+                                    self,
+                                    rvalue,
+                                    "invalid exact-constructor refinement forgetting cast: {:?} -> {:?}",
+                                    source,
+                                    ty,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1810,10 +1865,8 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         let ty = constant.const_.ty();
 
         self.infcx.tcx.for_each_free_region(&ty, |live_region| {
-            let live_region_vid = self
-                .universal_region_relations
-                .universal_regions
-                .to_region_vid(live_region);
+            let live_region_vid =
+                self.universal_region_relations.universal_regions.to_region_vid(live_region);
             self.constraints.liveness_constraints.add_location(live_region_vid, location);
         });
 
@@ -1896,14 +1949,19 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
             } else if let Const::Ty(_, ct) = constant.const_
                 && let ty::ConstKind::Param(p) = ct.kind()
             {
-                let body_def_id = self.universal_region_relations.universal_regions.defining_ty.def_id();
+                let body_def_id =
+                    self.universal_region_relations.universal_regions.defining_ty.def_id();
                 let const_param = tcx.generics_of(body_def_id).const_param(p, tcx);
                 self.ascribe_user_type(
                     constant.const_.ty(),
                     ty::UserType::new(ty::UserTypeKind::TypeOf(
                         const_param.def_id,
                         UserArgs {
-                            args: self.universal_region_relations.universal_regions.defining_ty.args(),
+                            args: self
+                                .universal_region_relations
+                                .universal_regions
+                                .defining_ty
+                                .args(),
                             user_self_ty: None,
                         },
                     )),
@@ -2293,13 +2351,15 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         match *ak {
             AggregateKind::Adt(adt_did, variant_index, args, _, active_field_index) => {
                 let def = tcx.adt_def(adt_did);
-                let variant = &def.variant(variant_index);
-                let adj_field_index = active_field_index.unwrap_or(field_index);
-                if let Some(field) = variant.fields.get(adj_field_index) {
-                    Ok(self.normalize(field.ty(tcx, args), location))
-                } else {
-                    Err(FieldAccessError::OutOfRange { field_count: variant.fields.len() })
+                let variant = def.variant(variant_index);
+                let field_index = active_field_index.unwrap_or(field_index);
+                if variant.fields.get(field_index).is_none() {
+                    return Err(FieldAccessError::OutOfRange { field_count: variant.fields.len() });
                 }
+                variant
+                    .field_ty(tcx, field_index, args)
+                    .map(|field_ty| self.normalize(field_ty, location))
+                    .map_err(FieldAccessError::Refined)
             }
             AggregateKind::Closure(_, args) => {
                 match args.as_closure().upvar_tys().get(field_index.as_usize()) {
@@ -2396,6 +2456,16 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
                         "accessed field #{} but variant only has {}",
                         i.as_u32(),
                         field_count,
+                    );
+                    continue;
+                }
+                Err(FieldAccessError::Refined(err)) => {
+                    span_mirbug!(
+                        self,
+                        rvalue,
+                        "could not recover refined field #{}: {:?}",
+                        i.as_u32(),
+                        err,
                     );
                     continue;
                 }

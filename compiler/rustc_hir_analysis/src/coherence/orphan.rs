@@ -228,7 +228,7 @@ pub(crate) fn orphan_check_impl(
             }
 
             ty::Bool
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Char
             | ty::Int(..)
             | ty::Uint(..)

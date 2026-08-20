@@ -701,7 +701,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 | ty::Foreign(_)
                 | ty::Str
                 | ty::Array(_, _)
-                | ty::Pat(_, _)
+                | ty::Refined(_, _)
                 | ty::Slice(_)
                 | ty::RawPtr(_, _)
                 | ty::Ref(_, _, _)
@@ -881,7 +881,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
                 | ty::Float(_)
                 | ty::Str
                 | ty::Array(_, _)
-                | ty::Pat(_, _)
+                | ty::Refined(_, _)
                 | ty::Slice(_)
                 | ty::Adt(..)
                 | ty::RawPtr(_, _)
@@ -1155,7 +1155,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         match *self_ty.kind() {
             // These impls are built-in because we cannot express sufficiently
             // generic impls in libcore.
-            ty::FnDef(..) | ty::FnPtr(..) | ty::Error(_) | ty::Tuple(..) | ty::Pat(..) => {
+            ty::FnDef(..) | ty::FnPtr(..) | ty::Error(_) | ty::Tuple(..) | ty::Refined(..) => {
                 candidates.vec.push(BuiltinCandidate);
             }
 
@@ -1287,7 +1287,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             }
 
             // Conditionally `Sized`.
-            ty::Tuple(..) | ty::Pat(..) | ty::Adt(..) | ty::UnsafeBinder(_) => {
+            ty::Tuple(..) | ty::Refined(..) | ty::Adt(..) | ty::UnsafeBinder(_) => {
                 candidates.vec.push(SizedCandidate);
             }
 
@@ -1351,7 +1351,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             | ty::RawPtr(_, _)
             | ty::Ref(_, _, _)
             | ty::FnDef(_, _)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::FnPtr(..)
             | ty::UnsafeBinder(_)
             | ty::Dynamic(_, _)
@@ -1387,7 +1387,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             | ty::Foreign(..)
             | ty::Str
             | ty::Array(..)
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Slice(_)
             | ty::RawPtr(_, _)
             | ty::Ref(..)
@@ -1438,7 +1438,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
             | ty::Char
             | ty::RawPtr(..)
             | ty::Never
-            | ty::Pat(..)
+            | ty::Refined(..)
             | ty::Dynamic(..)
             | ty::Str
             | ty::Slice(_)

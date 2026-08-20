@@ -125,7 +125,7 @@ pub(crate) enum CandidateKind<'tcx> {
 enum ProbeResult {
     NoMatch,
     BadReturnType,
-    Match,
+    Match { refinement_forget: bool },
 }
 
 /// When adjusting a receiver we often want to do one of
@@ -228,6 +228,8 @@ pub(crate) struct Pick<'tcx> {
     /// Indicates that we want to add an autoref (and maybe also unsize it), or if the receiver is
     /// `*mut T`, convert it to `*const T`.
     pub autoref_or_ptr_adjustment: Option<AutorefOrPtrAdjustment>,
+    /// Apply a refinement-forgetting conversion after the ordinary receiver adjustments.
+    pub refinement_forget: bool,
     pub self_ty: Ty<'tcx>,
 
     /// Unstable candidates alongside the stable ones.
@@ -931,6 +933,13 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             | ty::Tuple(..) => {
                 self.assemble_inherent_candidates_for_incoherent_ty(raw_self_ty, receiver_steps)
             }
+            ty::Refined(..) => {
+                if let Some(ty::RefinementImplHead::ExactConstructor { owner, .. }) =
+                    self.tcx.refinement_impl_head(raw_self_ty)
+                {
+                    self.assemble_inherent_impl_candidates_for_type(owner, receiver_steps);
+                }
+            }
             ty::Alias(..)
             | ty::Bound(..)
             | ty::Closure(..)
@@ -942,7 +951,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             | ty::FnDef(..)
             | ty::FnPtr(..)
             | ty::Infer(..)
-            | ty::Pat(..)
             | ty::Placeholder(..)
             | ty::UnsafeBinder(..) => {}
         }
@@ -1774,8 +1782,16 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                     ),
                 )
             })
-            .filter(|&(_, status)| status != ProbeResult::NoMatch)
+            .filter(|&(_, status)| !matches!(status, ProbeResult::NoMatch))
             .collect();
+        if applicable_candidates
+            .iter()
+            .any(|(_, status)| matches!(status, ProbeResult::Match { refinement_forget: false }))
+        {
+            applicable_candidates.retain(|(_, status)| {
+                !matches!(status, ProbeResult::Match { refinement_forget: true })
+            });
+        }
 
         debug!("applicable_candidates: {:?}", applicable_candidates);
 
@@ -1817,9 +1833,10 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
 
         applicable_candidates.pop().map(|(probe, status)| match status {
-            ProbeResult::Match => Ok(probe.to_unadjusted_pick(
+            ProbeResult::Match { refinement_forget } => Ok(probe.to_unadjusted_pick(
                 self_ty,
                 pick_diag_hints.unstable_candidates.clone().unwrap_or_default(),
+                refinement_forget,
             )),
             ProbeResult::NoMatch | ProbeResult::BadReturnType => Err(MethodError::BadReturnType),
         })
@@ -1838,6 +1855,7 @@ impl<'tcx> Pick<'tcx> {
             import_ids: _,
             autoderefs: _,
             autoref_or_ptr_adjustment: _,
+            refinement_forget: _,
             self_ty,
             unstable_candidates: _,
             receiver_steps: _,
@@ -1990,7 +2008,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         self.probe(|snapshot| {
             let outer_universe = self.universe();
 
-            let mut result = ProbeResult::Match;
+            let mut result = ProbeResult::Match { refinement_forget: false };
             let cause = &self.misc(self.span);
             let ocx = ObligationCtxt::new_with_diagnostics(self);
 
@@ -2028,8 +2046,25 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                     {
                         Ok(()) => {}
                         Err(err) => {
-                            debug!("--> cannot relate self-types {:?}", err);
-                            return ProbeResult::NoMatch;
+                            let Some(forget_target) = self.tcx.refinement_forget_target(self_ty)
+                            else {
+                                debug!("--> cannot relate self-types {:?}", err);
+                                return ProbeResult::NoMatch;
+                            };
+                            if ocx
+                                .relate(
+                                    cause,
+                                    self.param_env,
+                                    self.variance(),
+                                    forget_target,
+                                    xform_self_ty,
+                                )
+                                .is_err()
+                            {
+                                debug!("--> cannot relate refinement-forgotten self type");
+                                return ProbeResult::NoMatch;
+                            }
+                            result = ProbeResult::Match { refinement_forget: true };
                         }
                     }
                     // FIXME: Weirdly, we normalize the ret ty in this candidate, but no other candidates.
@@ -2223,7 +2258,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                 }
             }
 
-            if let ProbeResult::Match = result
+            if matches!(result, ProbeResult::Match { .. })
                 && let Some(return_ty) = self.return_type
                 && let Some(mut xform_ret_ty) = xform_ret_ty
             {
@@ -2393,6 +2428,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             import_ids: probes[0].0.import_ids,
             autoderefs: 0,
             autoref_or_ptr_adjustment: None,
+            refinement_forget: false,
             self_ty,
             unstable_candidates: vec![],
             receiver_steps: None,
@@ -2475,6 +2511,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             import_ids: child_candidate.import_ids,
             autoderefs: 0,
             autoref_or_ptr_adjustment: None,
+            refinement_forget: false,
             self_ty,
             unstable_candidates: vec![],
             shadowed_candidates: probes
@@ -2625,7 +2662,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                             self.var_for_def(self.span, param)
                         }
                     }
-
                 }
             });
             fn_sig.instantiate(self.tcx, args).skip_norm_wip()
@@ -2714,6 +2750,7 @@ impl<'tcx> Candidate<'tcx> {
         &self,
         self_ty: Ty<'tcx>,
         unstable_candidates: Vec<(Candidate<'tcx>, Symbol)>,
+        refinement_forget: bool,
     ) -> Pick<'tcx> {
         Pick {
             item: self.item,
@@ -2738,6 +2775,8 @@ impl<'tcx> Candidate<'tcx> {
             import_ids: self.import_ids,
             autoderefs: 0,
             autoref_or_ptr_adjustment: None,
+            refinement_forget,
+
             self_ty,
             unstable_candidates,
             receiver_steps: match self.kind {

@@ -974,6 +974,100 @@ pub(crate) fn check_associated_item(
     })
 }
 
+fn check_adt_variant<'a, 'tcx>(
+    tcx: TyCtxt<'tcx>,
+    adt_def: ty::AdtDef<'tcx>,
+    variant: &ty::VariantDef,
+    wfcx: &WfCheckingCtxt<'a, 'tcx>,
+    packed: bool,
+    all_sized: bool,
+) -> Result<(), ErrorGuaranteed> {
+    for field in &variant.fields {
+        if let Some(def_id) = field.value
+            && let Some(_ty) = tcx.type_of(def_id).no_bound_vars()
+        {
+            // FIXME(generic_const_exprs, default_field_values): this is a hack and needs to
+            // be refactored to check the instantiate-ability of the code better.
+            if let Some(def_id) = def_id.as_local()
+                && let DefKind::AnonConst = tcx.def_kind(def_id)
+                && let hir::Node::AnonConst(anon) = tcx.hir_node_by_def_id(def_id)
+                && let expr = &tcx.hir_body(anon.body).value
+                && let hir::ExprKind::Path(hir::QPath::Resolved(None, path)) = expr.kind
+                && let Res::Def(DefKind::ConstParam, _def_id) = path.res
+            {
+                // Do not evaluate bare `const` params, as those would ICE and are only
+                // usable if `#![feature(generic_const_exprs)]` is enabled.
+            } else {
+                // Evaluate the constant proactively, to emit an error if the constant has
+                // an unconditional error. We only do so if the const has no type params.
+                let _ = tcx.const_eval_poly(def_id);
+            }
+        }
+        let field_id = field.did.expect_local();
+        let span = tcx.ty_span(field_id);
+        let ty = wfcx.deeply_normalize(
+            span,
+            None,
+            tcx.type_of(field.did).instantiate_identity(),
+        );
+        wfcx.register_wf_obligation(span, Some(WellFormedLoc::Ty(field_id)), ty.into());
+
+        if matches!(ty.kind(), ty::Adt(def, _) if def.repr().scalable())
+            && !matches!(adt_def.repr().scalable, Some(ScalableElt::Container))
+        {
+            tcx.dcx().span_err(
+                span,
+                format!(
+                    "scalable vectors cannot be fields of a {}",
+                    adt_def.variant_descr()
+                ),
+            );
+        }
+    }
+
+    let needs_drop_copy = || {
+        packed && {
+            let ty = tcx.type_of(variant.tail().did).instantiate_identity().skip_norm_wip();
+            let ty = tcx.erase_and_anonymize_regions(ty);
+            assert!(!ty.has_infer());
+            ty.needs_drop(tcx, wfcx.infcx.typing_env(wfcx.param_env))
+        }
+    };
+    let all_sized = all_sized || variant.fields.is_empty() || needs_drop_copy();
+    let unsized_len = if all_sized { 0 } else { 1 };
+    for (idx, field) in variant.fields.raw[..variant.fields.len() - unsized_len].iter().enumerate() {
+        let last = idx == variant.fields.len() - 1;
+        let span = tcx.ty_span(field.did.expect_local());
+        let ty = wfcx.normalize(span, None, tcx.type_of(field.did).instantiate_identity());
+        wfcx.register_bound(
+            traits::ObligationCause::new(
+                span,
+                wfcx.body_def_id,
+                ObligationCauseCode::FieldSized {
+                    adt_kind: adt_def.adt_kind(),
+                    span,
+                    last,
+                },
+            ),
+            wfcx.param_env,
+            ty,
+            tcx.require_lang_item(LangItem::Sized, span),
+        );
+    }
+
+    if let ty::VariantDiscr::Explicit(discr_def_id) = variant.discr {
+        match tcx.const_eval_poly(discr_def_id) {
+            Ok(_) => {}
+            Err(ErrorHandled::Reported(..)) => {}
+            Err(ErrorHandled::TooGeneric(sp)) => {
+                span_bug!(sp, "enum variant discr was too generic to eval")
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// In a type definition, we check that to ensure that the types of the fields are well-formed.
 pub(crate) fn check_type_defn<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -988,96 +1082,26 @@ pub(crate) fn check_type_defn<'tcx>(
         let packed = adt_def.repr().packed();
 
         for variant in variants.iter() {
-            // All field types must be well-formed.
-            for field in &variant.fields {
-                if let Some(def_id) = field.value
-                    && let Some(_ty) = tcx.type_of(def_id).no_bound_vars()
-                {
-                    // FIXME(generic_const_exprs, default_field_values): this is a hack and needs to
-                    // be refactored to check the instantiate-ability of the code better.
-                    if let Some(def_id) = def_id.as_local()
-                        && let DefKind::AnonConst = tcx.def_kind(def_id)
-                        && let hir::Node::AnonConst(anon) = tcx.hir_node_by_def_id(def_id)
-                        && let expr = &tcx.hir_body(anon.body).value
-                        && let hir::ExprKind::Path(hir::QPath::Resolved(None, path)) = expr.kind
-                        && let Res::Def(DefKind::ConstParam, _def_id) = path.res
-                    {
-                        // Do not evaluate bare `const` params, as those would ICE and are only
-                        // usable if `#![feature(generic_const_exprs)]` is enabled.
-                    } else {
-                        // Evaluate the constant proactively, to emit an error if the constant has
-                        // an unconditional error. We only do so if the const has no type params.
-                        let _ = tcx.const_eval_poly(def_id);
-                    }
-                }
-                let field_id = field.did.expect_local();
-                let span = tcx.ty_span(field_id);
-                let ty = wfcx.deeply_normalize(
-                    span,
-                    None,
-                    tcx.type_of(field.did).instantiate_identity(),
-                );
-                wfcx.register_wf_obligation(span, Some(WellFormedLoc::Ty(field_id)), ty.into());
+            let variant_def_id = variant.def_id.expect_local();
+            let is_refined_variant = matches!(
+                tcx.hir_node_by_def_id(variant_def_id),
+                hir::Node::Variant(hir::Variant {
+                    scheme: hir::VariantSchemeSyntax::Refined { .. },
+                    ..
+                })
+            );
 
-                if matches!(ty.kind(), ty::Adt(def, _) if def.repr().scalable())
-                    && !matches!(adt_def.repr().scalable, Some(ScalableElt::Container))
-                {
-                    // Scalable vectors can only be fields of structs if the type has a
-                    // `rustc_scalable_vector` attribute w/out specifying an element count
-                    tcx.dcx().span_err(
-                        span,
-                        format!(
-                            "scalable vectors cannot be fields of a {}",
-                            adt_def.variant_descr()
-                        ),
-                    );
+            if is_refined_variant {
+                for param in &tcx.generics_of(variant_def_id).own_params {
+                    check_param_wf(tcx, param)?;
                 }
-            }
-
-            // For DST, or when drop needs to copy things around, all
-            // intermediate types must be sized.
-            let needs_drop_copy = || {
-                packed && {
-                    let ty = tcx.type_of(variant.tail().did).instantiate_identity().skip_norm_wip();
-                    let ty = tcx.erase_and_anonymize_regions(ty);
-                    assert!(!ty.has_infer());
-                    ty.needs_drop(tcx, wfcx.infcx.typing_env(wfcx.param_env))
-                }
-            };
-            // All fields (except for possibly the last) should be sized.
-            let all_sized = all_sized || variant.fields.is_empty() || needs_drop_copy();
-            let unsized_len = if all_sized { 0 } else { 1 };
-            for (idx, field) in
-                variant.fields.raw[..variant.fields.len() - unsized_len].iter().enumerate()
-            {
-                let last = idx == variant.fields.len() - 1;
-                let span = tcx.ty_span(field.did.expect_local());
-                let ty = wfcx.normalize(span, None, tcx.type_of(field.did).instantiate_identity());
-                wfcx.register_bound(
-                    traits::ObligationCause::new(
-                        span,
-                        wfcx.body_def_id,
-                        ObligationCauseCode::FieldSized {
-                            adt_kind: adt_def.adt_kind(),
-                            span,
-                            last,
-                        },
-                    ),
-                    wfcx.param_env,
-                    ty,
-                    tcx.require_lang_item(LangItem::Sized, span),
-                );
-            }
-
-            // Explicit `enum` discriminant values must const-evaluate successfully.
-            if let ty::VariantDiscr::Explicit(discr_def_id) = variant.discr {
-                match tcx.const_eval_poly(discr_def_id) {
-                    Ok(_) => {}
-                    Err(ErrorHandled::Reported(..)) => {}
-                    Err(ErrorHandled::TooGeneric(sp)) => {
-                        span_bug!(sp, "enum variant discr was too generic to eval")
-                    }
-                }
+                enter_wf_checking_ctxt(tcx, variant_def_id, |variant_wfcx| {
+                    check_adt_variant(tcx, adt_def, variant, variant_wfcx, packed, all_sized)?;
+                    check_where_clauses(variant_wfcx, variant_def_id);
+                    Ok(())
+                })?;
+            } else {
+                check_adt_variant(tcx, adt_def, variant, wfcx, packed, all_sized)?;
             }
         }
 

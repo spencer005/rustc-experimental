@@ -24,6 +24,38 @@ mod inherent_impls_overlap;
 mod orphan;
 mod unsafety;
 
+fn check_refinement_trait_impl<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    impl_def_id: LocalDefId,
+    trait_ref: ty::TraitRef<'tcx>,
+) -> Result<(), ErrorGuaranteed> {
+    let Some(ty::RefinementImplHead::ExactConstructor { .. }) =
+        tcx.refinement_impl_head(trait_ref.self_ty())
+    else {
+        return Ok(());
+    };
+
+    let prohibited_lang_trait = matches!(
+        tcx.as_lang_item(trait_ref.def_id),
+        Some(
+            LangItem::Drop
+                | LangItem::AsyncDrop
+                | LangItem::CoerceUnsized
+                | LangItem::DispatchFromDyn
+                | LangItem::Reborrow
+                | LangItem::CoerceShared
+        )
+    );
+    if !tcx.trait_is_auto(trait_ref.def_id) && !prohibited_lang_trait {
+        return Ok(());
+    }
+
+    Err(tcx.dcx().emit_err(diagnostics::ExactRefinementTraitImpl {
+        span: tcx.def_span(impl_def_id),
+        trait_name: tcx.item_name(trait_ref.def_id).to_string(),
+    }))
+}
+
 fn check_impl<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_def_id: LocalDefId,
@@ -41,7 +73,13 @@ fn check_impl<'tcx>(
     // This occurs with e.g., resolve failures (#30589).
     trait_ref.error_reported()?;
 
-    enforce_trait_manually_implementable(tcx, impl_def_id, trait_ref.def_id, trait_def)
+    check_refinement_trait_impl(tcx, impl_def_id, trait_ref)
+        .and(enforce_trait_manually_implementable(
+            tcx,
+            impl_def_id,
+            trait_ref.def_id,
+            trait_def,
+        ))
         .and(enforce_empty_impls_for_marker_traits(tcx, impl_def_id, trait_ref.def_id, trait_def))
         .and(always_applicable::check_negative_auto_trait_impl(
             tcx,

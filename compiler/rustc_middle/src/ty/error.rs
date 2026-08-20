@@ -183,7 +183,7 @@ impl<'tcx> Ty<'tcx> {
         }
     }
 
-    pub fn prefix_string(self, tcx: TyCtxt<'_>) -> Cow<'static, str> {
+    pub fn prefix_string(self, tcx: TyCtxt<'tcx>) -> Cow<'static, str> {
         match *self.kind() {
             ty::Infer(_)
             | ty::Error(_)
@@ -198,7 +198,10 @@ impl<'tcx> Ty<'tcx> {
             ty::Adt(def, _) => def.descr().into(),
             ty::Foreign(_) => "extern type".into(),
             ty::Array(..) => "array".into(),
-            ty::Pat(..) => "pattern type".into(),
+            ty::Refined(_, refinement) => match tcx.refinement_type_identity(refinement) {
+                ty::RefinementTypeIdentity::Pattern(_) => "pattern type".into(),
+                ty::RefinementTypeIdentity::Constructor(_) => "exact constructor type".into(),
+            },
             ty::Slice(_) => "slice".into(),
             ty::RawPtr(_, _) => "raw pointer".into(),
             ty::Ref(.., mutbl) => match mutbl {

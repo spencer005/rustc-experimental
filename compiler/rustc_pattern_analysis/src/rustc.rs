@@ -421,7 +421,7 @@ impl<'p, 'tcx: 'p> RustcPatCtxt<'p, 'tcx> {
             | ty::RawPtr(_, _)
             | ty::FnDef(_, _)
             | ty::FnPtr(..)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::Dynamic(_, _)
             | ty::Closure(..)
             | ty::CoroutineClosure(..)

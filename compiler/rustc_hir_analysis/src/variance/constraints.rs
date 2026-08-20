@@ -44,6 +44,7 @@ pub(crate) struct Constraint<'a> {
 /// the `DefId` and the start of `Foo`'s inferreds.
 struct CurrentItem {
     inferred_start: InferredIndex,
+    param_index_map: Option<Vec<Option<u32>>>,
 }
 
 pub(crate) fn add_constraints_from_crate<'a, 'tcx>(
@@ -91,6 +92,107 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         self.terms_cx.tcx
     }
 
+    fn refined_variant_family_index_map(
+        &self,
+        family_def_id: LocalDefId,
+        variant_def_id: LocalDefId,
+    ) -> Vec<Option<u32>> {
+        let tcx = self.tcx();
+        let family_generics = tcx.generics_of(family_def_id);
+        let binders = tcx.variant_binder_scheme(variant_def_id);
+        binders
+            .family
+            .iter()
+            .map(|scheme_param| {
+                family_generics
+                    .own_params
+                    .iter()
+                    .find(|family_param| family_param.def_id == scheme_param.def_id)
+                    .map(|family_param| family_param.index)
+            })
+            .chain(std::iter::repeat_n(None, binders.local.len()))
+            .collect()
+    }
+
+    fn scheme_arg_is_family_param(
+        &self,
+        arg: ty::GenericArg<'tcx>,
+        scheme: &ty::RefinedVariantScheme<'tcx>,
+        family_param: &ty::GenericParamDef,
+    ) -> bool {
+        let Some(scheme_param) = scheme
+            .binders
+            .family
+            .iter()
+            .find(|scheme_param| scheme_param.def_id == family_param.def_id)
+        else {
+            return false;
+        };
+
+        match (arg.kind(), &scheme_param.kind) {
+            (GenericArgKind::Type(ty), ty::GenericParamDefKind::Type { .. }) => {
+                matches!(*ty.kind(), ty::Param(param) if param.index == scheme_param.index)
+            }
+            (
+                GenericArgKind::Lifetime(region),
+                ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime,
+            ) => matches!(region.kind(), ty::ReEarlyParam(param) if param.index == scheme_param.index),
+            (GenericArgKind::Const(ct), ty::GenericParamDefKind::Const { .. }) => {
+                matches!(ct.kind(), ty::ConstKind::Param(param) if param.index == scheme_param.index)
+            }
+            _ => false,
+        }
+    }
+
+    fn refined_result_preserves_family_param(
+        &self,
+        family_def_id: LocalDefId,
+        variant_def_id: LocalDefId,
+        family_param_position: usize,
+        family_param: &ty::GenericParamDef,
+    ) -> bool {
+        let tcx = self.tcx();
+        let ty::VariantScheme::Refined(scheme) = tcx.variant_scheme(variant_def_id) else {
+            return false;
+        };
+        let ty::Adt(result_def, result_args) = *scheme.result.kind() else {
+            return false;
+        };
+        if result_def.did() != family_def_id.to_def_id() {
+            return false;
+        }
+        let Some(&arg) = result_args.get(family_param_position) else {
+            return false;
+        };
+        self.scheme_arg_is_family_param(arg, scheme, family_param)
+    }
+
+    fn add_refined_result_variance_floor(
+        &mut self,
+        family_def_id: LocalDefId,
+        current_item: &CurrentItem,
+    ) {
+        let tcx = self.tcx();
+        let family_generics = tcx.generics_of(family_def_id);
+        let variants = tcx.adt_def(family_def_id).variants();
+        for (position, family_param) in family_generics.own_params.iter().enumerate() {
+            let uniform = variants.iter().all(|variant| {
+                let Some(variant_def_id) = variant.def_id.as_local() else {
+                    return false;
+                };
+                self.refined_result_preserves_family_param(
+                    family_def_id,
+                    variant_def_id,
+                    position,
+                    family_param,
+                )
+            });
+            if !uniform {
+                self.add_constraint(current_item, family_param.index, self.invariant);
+            }
+        }
+    }
+
     fn build_constraints_for_item(&mut self, def_id: LocalDefId) {
         let tcx = self.tcx();
         debug!("build_constraints_for_item({})", tcx.def_path_str(def_id));
@@ -101,8 +203,9 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         }
 
         let inferred_start = self.terms_cx.inferred_starts[&def_id];
-        let current_item = &CurrentItem { inferred_start };
+        let current_item = &CurrentItem { inferred_start, param_index_map: None };
         let ty = tcx.type_of(def_id).instantiate_identity().skip_norm_wip();
+        let ty = tcx.exact_constructor_type(ty).map_or(ty, |exact| exact.base);
 
         match ty.kind() {
             ty::Adt(def, _) => {
@@ -112,14 +215,89 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 //
                 // self.add_constraints_from_generics(generics);
 
-                for field in def.all_fields() {
-                    self.add_constraints_from_ty(
-                        current_item,
-                        tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
-                        self.covariant,
-                    );
+                match tcx.hir_node_by_def_id(def_id) {
+                    hir::Node::Item(item) => {
+                        let hir::ItemKind::Enum(_, _, enum_def) = item.kind else {
+                            for field in def.all_fields() {
+                                self.add_constraints_from_ty(
+                                    current_item,
+                                    tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
+                                    self.covariant,
+                                );
+                            }
+                            return;
+                        };
+
+                        for variant in def.variants() {
+                            let variant_def_id = variant.def_id.expect_local();
+                            let hir::Node::Variant(hir_variant) =
+                                tcx.hir_node_by_def_id(variant_def_id)
+                            else {
+                                span_bug!(
+                                    tcx.def_span(variant_def_id),
+                                    "variant DefId did not map to HIR"
+                                )
+                            };
+                            match hir_variant.scheme {
+                                hir::VariantSchemeSyntax::Ordinary => {
+                                    for field in &variant.fields {
+                                        self.add_constraints_from_ty(
+                                            current_item,
+                                            tcx.type_of(field.did)
+                                                .instantiate_identity()
+                                                .skip_norm_wip(),
+                                            self.covariant,
+                                        );
+                                    }
+                                }
+                                hir::VariantSchemeSyntax::Refined { .. } => {
+                                    let mapped_item = CurrentItem {
+                                        inferred_start,
+                                        param_index_map: Some(
+                                            self.refined_variant_family_index_map(
+                                                def_id,
+                                                variant_def_id,
+                                            ),
+                                        ),
+                                    };
+                                    for field in &variant.fields {
+                                        self.add_constraints_from_ty(
+                                            &mapped_item,
+                                            tcx.type_of(field.did)
+                                                .instantiate_identity()
+                                                .skip_norm_wip(),
+                                            self.covariant,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        if enum_def
+                            .variants
+                            .iter()
+                            .any(|variant| matches!(variant.scheme, hir::VariantSchemeSyntax::Refined { .. }))
+                        {
+                            self.add_refined_result_variance_floor(def_id, current_item);
+                        }
+
+                    }
+                    hir::Node::Ctor(_) => {
+                        for field in def.all_fields() {
+                            self.add_constraints_from_ty(
+                                current_item,
+                                tcx.type_of(field.did).instantiate_identity().skip_norm_wip(),
+                                self.covariant,
+                            );
+                        }
+                    }
+                    node => span_bug!(
+                        tcx.def_span(def_id),
+                        "ADT-typed definition had unexpected HIR node {node:?}"
+                    ),
                 }
+                return;
             }
+
 
             ty::FnDef(..) => {
                 self.add_constraints_from_sig(
@@ -141,6 +319,13 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
     }
 
     fn add_constraint(&mut self, current: &CurrentItem, index: u32, variance: VarianceTermPtr<'a>) {
+        let index = match &current.param_index_map {
+            Some(map) => match map.get(index as usize).copied().flatten() {
+                Some(index) => index,
+                None => return,
+            },
+            None => index,
+        };
         debug!("add_constraint(index={}, variance={:?})", index, variance);
         self.constraints.push(Constraint {
             inferred: InferredIndex(current.inferred_start.0 + index as usize),
@@ -237,8 +422,12 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.add_constraints_from_ty(current, typ, variance);
             }
 
-            ty::Pat(typ, pat) => {
-                self.add_constraints_from_pat(current, variance, pat);
+            ty::Refined(typ, refinement) => {
+                if let ty::RefinementTypeInvariant::ScalarPattern(pattern) =
+                    self.tcx().refinement_type_invariant(refinement)
+                {
+                    self.add_constraints_from_pat(current, variance, pattern);
+                }
                 self.add_constraints_from_ty(current, typ, variance);
             }
 

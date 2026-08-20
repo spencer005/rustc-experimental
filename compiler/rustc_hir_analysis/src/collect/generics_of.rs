@@ -1,9 +1,10 @@
 use std::assert_matches;
 use std::ops::ControlFlow;
+use rustc_data_structures::fx::FxHashSet;
 
 use rustc_errors::{Diag, DiagCtxtHandle, Diagnostic, Level};
 use rustc_hir::def::DefKind;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::intravisit::{self, Visitor, VisitorExt};
 use rustc_hir::{self as hir, AmbigArg, GenericParamKind, HirId, Node};
 use rustc_middle::span_bug;
@@ -13,6 +14,134 @@ use rustc_span::{Span, kw, sym};
 use tracing::{debug, instrument};
 
 use crate::middle::resolve_bound_vars as rbv;
+
+fn refined_variant_rebound_family_params(
+    tcx: TyCtxt<'_>,
+    variant: &hir::Variant<'_>,
+) -> Vec<ty::GenericParamDef> {
+    let hir::VariantSchemeSyntax::Refined { result, .. } = variant.scheme else {
+        return Vec::new();
+    };
+
+    let family_def_id = tcx.local_parent(variant.def_id);
+    let family_generics = tcx.generics_of(family_def_id);
+    let family_param_ids: FxHashSet<DefId> =
+        family_generics.own_params.iter().map(|param| param.def_id).collect();
+
+    struct FamilyUsage<'a> {
+        family_param_ids: &'a FxHashSet<DefId>,
+        used: FxHashSet<DefId>,
+    }
+
+    impl<'tcx> Visitor<'tcx> for FamilyUsage<'_> {
+        fn visit_path(&mut self, path: &hir::Path<'tcx>, _hir_id: HirId) {
+            if let Some(def_id) = path.res.opt_def_id()
+                && self.family_param_ids.contains(&def_id)
+            {
+                self.used.insert(def_id);
+            }
+            intravisit::walk_path(self, path);
+        }
+
+        fn visit_lifetime(&mut self, lifetime: &'tcx hir::Lifetime) {
+            if let hir::LifetimeKind::Param(def_id) = lifetime.kind {
+                let def_id = def_id.to_def_id();
+                if self.family_param_ids.contains(&def_id) {
+                    self.used.insert(def_id);
+                }
+            }
+            intravisit::walk_lifetime(self, lifetime);
+        }
+    }
+
+    let used = match result {
+        hir::VariantResult::Default => family_param_ids,
+        hir::VariantResult::Explicit(_) => {
+            let mut usage = FamilyUsage { family_param_ids: &family_param_ids, used: FxHashSet::default() };
+            intravisit::walk_variant(&mut usage, variant);
+            usage.used
+        }
+    };
+
+    family_generics
+        .own_params
+        .iter()
+        .filter(|param| used.contains(&param.def_id))
+        .cloned()
+        .enumerate()
+        .map(|(index, mut param)| {
+            param.index = index as u32;
+            match &mut param.kind {
+                ty::GenericParamDefKind::Type { has_default, .. }
+                | ty::GenericParamDefKind::Const { has_default } => *has_default = false,
+                ty::GenericParamDefKind::Lifetime | ty::GenericParamDefKind::OriginLifetime => {}
+            }
+            param
+        })
+        .collect()
+}
+pub(super) fn variant_binder_scheme(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::VariantBinderScheme {
+    let Node::Variant(variant) = tcx.hir_node_by_def_id(def_id) else {
+        span_bug!(tcx.def_span(def_id), "variant binder scheme requested for non-variant definition")
+    };
+    let hir::VariantSchemeSyntax::Refined { generics, .. } = variant.scheme else {
+        span_bug!(tcx.def_span(def_id), "variant binder scheme requested for ordinary variant")
+    };
+
+    let family = refined_variant_rebound_family_params(tcx, variant);
+    let local_start = family.len() as u32;
+    let mut local = Vec::with_capacity(generics.params.len());
+
+    local.extend(
+        super::early_bound_lifetimes_from_generics(tcx, generics)
+            .enumerate()
+            .map(|(index, param)| ty::GenericParamDef {
+                name: param.name.ident().name,
+                index: local_start + index as u32,
+                def_id: param.def_id.to_def_id(),
+                pure_wrt_drop: param.pure_wrt_drop,
+                kind: match param.kind {
+                    hir::GenericParamKind::Lifetime { kind: hir::LifetimeParamKind::Origin } => {
+                        ty::GenericParamDefKind::OriginLifetime
+                    }
+                    hir::GenericParamKind::Lifetime { .. } => ty::GenericParamDefKind::Lifetime,
+                    hir::GenericParamKind::Type { .. } | hir::GenericParamKind::Const { .. } => {
+                        unreachable!()
+                    }
+                },
+            }),
+    );
+
+    let mut next_index = local_start + local.len() as u32;
+    for param in generics.params {
+        let kind = match param.kind {
+            hir::GenericParamKind::Lifetime { .. } => continue,
+            hir::GenericParamKind::Type { default, synthetic } => {
+                if default.is_some() {
+                    tcx.dcx().span_err(param.span, "defaults for generic parameters are not allowed here");
+                }
+                ty::GenericParamDefKind::Type { has_default: false, synthetic }
+            }
+            hir::GenericParamKind::Const { default, .. } => {
+                if default.is_some() {
+                    tcx.dcx().span_err(param.span, "defaults for generic parameters are not allowed here");
+                }
+                ty::GenericParamDefKind::Const { has_default: false }
+            }
+        };
+        local.push(ty::GenericParamDef {
+            name: param.name.ident().name,
+            index: next_index,
+            def_id: param.def_id.to_def_id(),
+            pure_wrt_drop: param.pure_wrt_drop,
+            kind,
+        });
+        next_index += 1;
+    }
+
+    ty::VariantBinderScheme { family, local }
+}
+
 
 #[instrument(level = "debug", skip(tcx), ret)]
 pub(super) fn generics_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Generics {
@@ -68,15 +197,50 @@ pub(super) fn generics_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Generics {
 
     let hir_id = tcx.local_def_id_to_hir_id(def_id);
     let node = tcx.hir_node(hir_id);
+    if matches!(
+        node,
+        Node::Variant(hir::Variant { scheme: hir::VariantSchemeSyntax::Refined { .. }, .. })
+    ) {
+        let binders = tcx.variant_binder_scheme(def_id);
+        let own_params: Vec<_> = binders
+            .family
+            .iter()
+            .chain(&binders.local)
+            .cloned()
+            .collect();
+        let param_def_id_to_index =
+            own_params.iter().map(|param| (param.def_id, param.index)).collect();
+        return ty::Generics {
+            parent: None,
+            parent_count: 0,
+            own_params,
+            param_def_id_to_index,
+            has_self: false,
+            has_late_bound_regions: has_late_bound_regions(tcx, node),
+        };
+    }
+
 
     let parent_def_id = match node {
-        Node::ImplItem(_)
-        | Node::TraitItem(_)
-        | Node::Variant(_)
-        | Node::Ctor(..)
-        | Node::Field(_) => {
+        Node::ImplItem(_) | Node::TraitItem(_) => {
             let parent_id = tcx.hir_get_parent_item(hir_id);
             Some(parent_id.def_id)
+        }
+        Node::Variant(_) => Some(tcx.local_parent(def_id)),
+        Node::Ctor(..) | Node::Field(_) => {
+            let direct_parent = tcx.local_parent(def_id);
+            if matches!(
+                tcx.hir_node_by_def_id(direct_parent),
+                Node::Variant(hir::Variant {
+                    scheme: hir::VariantSchemeSyntax::Refined { .. },
+                    ..
+                })
+            ) {
+                Some(direct_parent)
+            } else {
+                let parent_id = tcx.hir_get_parent_item(hir_id);
+                Some(parent_id.def_id)
+            }
         }
         // FIXME(#43408) always enable this once `lazy_normalization` is
         // stable enough and does not need a feature gate anymore.
@@ -444,6 +608,7 @@ fn param_default_policy(node: Node<'_>) -> Option<ParamDefaultPolicy> {
         // compatibility, let's hard-reject defaults on them.
         Node::ForeignItem(_) => ParamDefaultPolicy::Forbidden,
         Node::OpaqueTy(..) => ParamDefaultPolicy::Allowed,
+        Node::Variant(_) => ParamDefaultPolicy::Forbidden,
         _ => return None,
     })
 }

@@ -203,6 +203,10 @@ pub(crate) enum RibKind<'ra> {
     /// binds. Disallow any other upvars (including other ty params that are
     /// upvars).
     AssocItem,
+    /// Generic parameters declared by a refined constructor. Unlike an item rib, these parameters
+    /// extend the enclosing enum's generic scope instead of introducing an independent item boundary.
+    VariantGenerics,
+
 
     /// We passed through a function, closure or coroutine signature. Disallow labels.
     FnOrCoroutine,
@@ -256,6 +260,7 @@ impl RibKind<'_> {
             | RibKind::InlineAsmSym => false,
             RibKind::ConstParamTy
             | RibKind::AssocItem
+            | RibKind::VariantGenerics
             | RibKind::Item(..)
             | RibKind::ForwardGenericParamBan(_) => true,
         }
@@ -1505,7 +1510,25 @@ impl<'ast, 'ra, 'tcx> Visitor<'ast> for LateResolutionVisitor<'_, 'ast, 'ra, 'tc
         walk_list!(self, visit_attribute, &v.attrs);
         self.visit_vis(&v.vis);
         self.visit_ident(&v.ident);
-        self.visit_variant_data(&v.data);
+        match &v.scheme {
+            VariantSchemeSyntax::Ordinary => self.visit_variant_data(&v.data),
+            VariantSchemeSyntax::Refined { generics, result } => {
+                self.with_generic_param_rib(
+                    &generics.params,
+                    RibKind::VariantGenerics,
+                    v.id,
+                    LifetimeBinderKind::Item,
+                    generics.span,
+                    |this| {
+                        this.visit_generics(generics);
+                        this.visit_variant_data(&v.data);
+                        if let VariantResult::Explicit(ty) = result {
+                            this.visit_ty(ty);
+                        }
+                    },
+                );
+            }
+        }
         if let Some(discr) = &v.disr_expr {
             self.resolve_anon_const(discr, AnonConstKind::EnumDiscriminant);
         }
@@ -3301,7 +3324,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                 };
 
                 let res = match kind {
-                    RibKind::Item(..) | RibKind::AssocItem => {
+                    RibKind::Item(..) | RibKind::AssocItem | RibKind::VariantGenerics => {
                         Res::Def(def_kind, def_id.to_def_id())
                     }
                     RibKind::Normal => {
@@ -4851,7 +4874,12 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                     diag.stash(path_span, StashKey::AssociatedTypeSuggestion);
                 }
 
-                if source.is_expected(res) || res == Res::Err {
+                let exact_variant_type = matches!(
+                    (source, res),
+                    (PathSource::Type, Res::Def(DefKind::Variant, _))
+                ) && self.r.tcx.features().refined_enums();
+                if source.is_expected(res) || exact_variant_type || res == Res::Err {
+
                     partial_res
                 } else {
                     report_errors(self, Some(res))

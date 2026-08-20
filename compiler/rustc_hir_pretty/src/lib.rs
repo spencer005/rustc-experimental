@@ -847,6 +847,7 @@ impl<'a> State<'a> {
         span: rustc_span::Span,
     ) {
         let (cb, ib) = self.head("enum");
+
         self.print_name(name);
         self.print_generic_params(generics.params);
         self.print_where_clause(generics);
@@ -937,8 +938,20 @@ impl<'a> State<'a> {
 
     pub fn print_variant(&mut self, v: &hir::Variant<'_>) {
         let (cb, ib) = self.head("");
-        let generics = hir::Generics::empty();
+        let generics = match v.scheme {
+            hir::VariantSchemeSyntax::Ordinary => hir::Generics::empty(),
+            hir::VariantSchemeSyntax::Refined { generics, .. } => generics,
+        };
         self.print_struct(v.ident.name, generics, &v.data, v.span, false, cb, ib);
+        if let hir::VariantSchemeSyntax::Refined {
+            result: hir::VariantResult::Explicit(result),
+            ..
+        } = v.scheme
+        {
+            self.space();
+            self.word_space("->");
+            self.print_type(result);
+        }
         if let Some(ref d) = v.disr_expr {
             self.space();
             self.word_space("=");

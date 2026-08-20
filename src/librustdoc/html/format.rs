@@ -437,7 +437,7 @@ fn generate_item_def_id_path(
         if let Some(new_def_id) = ty.ty_adt_def().map(|adt| adt.did()) {
             def_id = new_def_id;
         } else {
-            prim = PrimitiveType::from_ty(ty);
+            prim = PrimitiveType::from_ty(tcx, ty);
         }
     }
 
@@ -959,9 +959,15 @@ fn fmt_type(
             primitive_link(f, PrimitiveType::Slice, format_args!("[{name}]"), cx)
         }
         clean::Slice(t) => Wrapped::with_square_brackets().wrap(print_type(t, cx)).fmt(f),
-        clean::Type::Pat(t, pat) => {
-            fmt::Display::fmt(&print_type(t, cx), f)?;
-            write!(f, " is {pat}")
+        clean::Type::Refined(t, refinement) => match refinement {
+            clean::TypeRefinement::Pattern(pattern) => {
+                fmt::Display::fmt(&print_type(t, cx), f)?;
+                write!(f, " is {pattern}")
+            }
+            clean::TypeRefinement::Constructor(variant) => {
+                fmt::Display::fmt(&print_type(t, cx), f)?;
+                write!(f, "::{variant}")
+            }
         }
         clean::Type::FieldOf(t, field) => {
             write!(f, "field_of!(")?;

@@ -11,7 +11,7 @@ use rustc_hir::def_id::LocalDefId;
 use rustc_span::Spanned;
 use rustc_type_ir::{ConstKind, TypeFolder, VisitorResult, try_visit};
 
-use super::{GenericArg, GenericArgKind, Pattern};
+use super::{GenericArg, GenericArgKind, Pattern, RefinementTypeKey};
 use crate::mir::PlaceElem;
 use crate::ty::print::{FmtPrinter, Printer, with_no_trimmed_paths};
 use crate::ty::{
@@ -325,6 +325,36 @@ impl<'tcx> TypeVisitable<TyCtxt<'tcx>> for Pattern<'tcx> {
         (**self).visit_with(visitor)
     }
 }
+impl<'tcx> TypeFoldable<TyCtxt<'tcx>> for RefinementTypeKey<'tcx> {
+    fn try_fold_with<F: FallibleTypeFolder<TyCtxt<'tcx>>>(
+        self,
+        folder: &mut F,
+    ) -> Result<Self, F::Error> {
+        let definition = (*self).try_fold_with(folder)?;
+        Ok(if definition == *self {
+            self
+        } else {
+            folder.cx().intern_refinement_definition(definition)
+        })
+    }
+
+    fn fold_with<F: TypeFolder<TyCtxt<'tcx>>>(self, folder: &mut F) -> Self {
+        let definition = (*self).fold_with(folder);
+        if definition == *self {
+            self
+        } else {
+            folder.cx().intern_refinement_definition(definition)
+        }
+
+    }
+}
+
+impl<'tcx> TypeVisitable<TyCtxt<'tcx>> for RefinementTypeKey<'tcx> {
+    fn visit_with<V: TypeVisitor<TyCtxt<'tcx>>>(&self, visitor: &mut V) -> V::Result {
+        (**self).visit_with(visitor)
+    }
+}
+
 
 impl<'tcx> TypeFoldable<TyCtxt<'tcx>> for Ty<'tcx> {
     fn try_fold_with<F: FallibleTypeFolder<TyCtxt<'tcx>>>(
@@ -374,7 +404,9 @@ impl<'tcx> TypeSuperFoldable<TyCtxt<'tcx>> for Ty<'tcx> {
                 ty::CoroutineClosure(did, args.try_fold_with(folder)?)
             }
             ty::Alias(is_rigid, data) => ty::Alias(is_rigid, data.try_fold_with(folder)?),
-            ty::Pat(ty, pat) => ty::Pat(ty.try_fold_with(folder)?, pat.try_fold_with(folder)?),
+            ty::Refined(ty, refinement) => {
+                ty::Refined(ty.try_fold_with(folder)?, refinement.try_fold_with(folder)?)
+            }
 
             ty::Bool
             | ty::Char
@@ -413,7 +445,9 @@ impl<'tcx> TypeSuperFoldable<TyCtxt<'tcx>> for Ty<'tcx> {
             ty::Closure(did, args) => ty::Closure(did, args.fold_with(folder)),
             ty::CoroutineClosure(did, args) => ty::CoroutineClosure(did, args.fold_with(folder)),
             ty::Alias(is_rigid, data) => ty::Alias(is_rigid, data.fold_with(folder)),
-            ty::Pat(ty, pat) => ty::Pat(ty.fold_with(folder), pat.fold_with(folder)),
+            ty::Refined(ty, refinement) => {
+                ty::Refined(ty.fold_with(folder), refinement.fold_with(folder))
+            }
 
             ty::Bool
             | ty::Char
@@ -462,9 +496,9 @@ impl<'tcx> TypeSuperVisitable<TyCtxt<'tcx>> for Ty<'tcx> {
             ty::CoroutineClosure(_did, args) => args.visit_with(visitor),
             ty::Alias(_, data) => data.visit_with(visitor),
 
-            ty::Pat(ty, pat) => {
+            ty::Refined(ty, refinement) => {
                 try_visit!(ty.visit_with(visitor));
-                pat.visit_with(visitor)
+                refinement.visit_with(visitor)
             }
 
             ty::Error(guar) => guar.visit_with(visitor),

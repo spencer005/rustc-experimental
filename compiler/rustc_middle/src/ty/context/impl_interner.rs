@@ -26,7 +26,7 @@ use crate::traits::solve::{
 use crate::ty::print::{FmtPrinter, Print};
 use crate::ty::{
     self, BoundRegion, Clause, Const, List, ParamTy, Pattern, PolyExistentialPredicate, Predicate,
-    Region, RegionKind, Ty, TyCtxt,
+    RefinementTypeKey, Region, RegionKind, Ty, TyCtxt,
 };
 
 #[allow(rustc::usage_of_ty_tykind)]
@@ -108,6 +108,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type BoundExistentialPredicates = &'tcx List<PolyExistentialPredicate<'tcx>>;
 
     type AllocId = crate::mir::interpret::AllocId;
+    type RefinementTypeKey = RefinementTypeKey<'tcx>;
     type Pat = Pattern<'tcx>;
     type PatList = &'tcx List<Pattern<'tcx>>;
     type Safety = hir::Safety;

@@ -229,7 +229,7 @@ impl<'tcx> TyCtxt<'tcx> {
             }
 
             // Pattern type might not have a simplified type.
-            ty::Pat(_, _) => {
+            ty::Refined(_, _) => {
                 if let Some(simp) = ty::fast_reject::simplify_type(
                     tcx,
                     self_ty,

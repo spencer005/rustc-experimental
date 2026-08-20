@@ -2210,7 +2210,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
                 ty::Binder::dummy(tys.last().map_or_else(Vec::new, |&last| vec![last]))
             }
 
-            ty::Pat(ty, _) => ty::Binder::dummy(vec![*ty]),
+            ty::Refined(ty, _) => ty::Binder::dummy(vec![*ty]),
 
             ty::Adt(def, args) => {
                 if let Some(crit) = def.sizedness_constraint(self.tcx(), sizedness) {
@@ -2258,7 +2258,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
                 ty::Binder::dummy(tys.iter().collect())
             }
 
-            ty::Pat(ty, _) => {
+            ty::Refined(ty, _) => {
                 // (*) binder moved here
                 ty::Binder::dummy(vec![ty])
             }
@@ -2385,7 +2385,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
                 })
             }
 
-            ty::Pat(ty, _) | ty::Array(ty, _) | ty::Slice(ty) => {
+            ty::Refined(ty, _) | ty::Array(ty, _) | ty::Slice(ty) => {
                 ty::Binder::dummy(AutoImplConstituents { types: vec![ty], assumptions: vec![] })
             }
 

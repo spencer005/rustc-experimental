@@ -171,6 +171,12 @@ impl<'tcx, E: TyEncoder<'tcx>> Encodable<E> for ty::Pattern<'tcx> {
         self.0.0.encode(e);
     }
 }
+impl<'tcx, E: TyEncoder<'tcx>> Encodable<E> for ty::RefinementTypeKey<'tcx> {
+    fn encode(&self, e: &mut E) {
+        self.0.0.encode(e);
+    }
+}
+
 
 impl<'tcx, E: TyEncoder<'tcx>> Encodable<E> for ty::ValTree<'tcx> {
     fn encode(&self, e: &mut E) {
@@ -350,6 +356,11 @@ impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for ty::Const<'tcx> {
 impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for ty::Pattern<'tcx> {
     fn decode(decoder: &mut D) -> Self {
         decoder.interner().mk_pat(Decodable::decode(decoder))
+    }
+}
+impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for ty::RefinementTypeKey<'tcx> {
+    fn decode(decoder: &mut D) -> Self {
+        decoder.interner().intern_refinement_definition(Decodable::decode(decoder))
     }
 }
 

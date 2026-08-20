@@ -34,6 +34,13 @@ pub trait InternalCx<'tcx>: Copy + Clone {
         T: ty::CollectAndApply<ty::GenericArg<'tcx>, ty::GenericArgsRef<'tcx>>;
 
     fn mk_pat(self, v: ty::PatternKind<'tcx>) -> ty::Pattern<'tcx>;
+    fn refinement_for_pattern(self, pattern: ty::Pattern<'tcx>) -> ty::RefinementTypeKey<'tcx>;
+
+    fn refinement_for_constructor(
+        self,
+        variant_def_id: rustc_hir::def_id::DefId,
+    ) -> ty::RefinementTypeKey<'tcx>;
+
 
     fn mk_poly_existential_predicates(
         self,

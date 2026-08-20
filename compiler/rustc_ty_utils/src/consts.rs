@@ -120,6 +120,16 @@ fn recurse_build<'tcx>(
             let value = recurse_build(tcx, body, source, root_span)?;
             ty::Const::new_expr(tcx, Expr::new_cast(tcx, CastKind::Use, value_ty, value, node.ty))
         }
+        &ExprKind::RefinementConstruct { source } => {
+            let value_ty = body.exprs[source].ty;
+            let value = recurse_build(tcx, body, source, root_span)?;
+            ty::Const::new_expr(tcx, Expr::new_cast(tcx, CastKind::Use, value_ty, value, node.ty))
+        }
+        &ExprKind::RefinementForget { source } => {
+            let value_ty = body.exprs[source].ty;
+            let value = recurse_build(tcx, body, source, root_span)?;
+            ty::Const::new_expr(tcx, Expr::new_cast(tcx, CastKind::Use, value_ty, value, node.ty))
+        }
         &ExprKind::Cast { source } => {
             let value_ty = body.exprs[source].ty;
             let value = recurse_build(tcx, body, source, root_span)?;
@@ -273,6 +283,8 @@ impl<'a, 'tcx> IsThirPolymorphic<'a, 'tcx> {
             | thir::ExprKind::Unary { .. }
             | thir::ExprKind::Cast { .. }
             | thir::ExprKind::Use { .. }
+            | thir::ExprKind::RefinementConstruct { .. }
+            | thir::ExprKind::RefinementForget { .. }
             | thir::ExprKind::NeverToAny { .. }
             | thir::ExprKind::PointerCoercion { .. }
             | thir::ExprKind::Loop { .. }

@@ -1481,6 +1481,18 @@ pub enum Term {
     Constant(Constant),
 }
 
+/// The semantic identity attached to a refined base type.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "rkyv_0_8", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
+#[cfg_attr(feature = "rkyv_0_8", rkyv(derive(Debug)))]
+#[serde(rename_all = "snake_case")]
+pub enum TypeRefinement {
+    /// A scalar pattern refinement, such as `1..=4` or `!null`.
+    Pattern(String),
+    /// An exact enum constructor refinement. The string is the constructor name.
+    Constructor(String),
+}
+
 /// A type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "rkyv_0_8", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
@@ -1522,17 +1534,17 @@ pub enum Type {
         /// Keep in mind that it's not guaranteed to match the actual source code of the expression.
         len: String,
     },
-    /// A pattern type, e.g. `u32 is 1..`
-    ///
-    /// See [the tracking issue](https://github.com/rust-lang/rust/issues/123646)
-    Pat {
-        /// The base type, e.g. the `u32` in `u32 is 1..`
+    /// A refined type. Pattern refinements render as `T is P`; exact constructor refinements
+    /// render as `Family<Args>::Variant`.
+    Refined {
+        /// The base type.
         #[serde(rename = "type")]
         #[cfg_attr(feature = "rkyv_0_8", rkyv(omit_bounds))]
         type_: Box<Type>,
-        #[doc(hidden)]
-        __pat_unstable_do_not_use: String,
+        /// The refinement identity.
+        refinement: TypeRefinement,
     },
+
     /// An opaque type that satisfies a set of bounds, `impl TraitA + TraitB + ...`
     ImplTrait(Vec<GenericBound>),
     /// A type that's left to be inferred, `_`

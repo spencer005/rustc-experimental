@@ -1832,9 +1832,17 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 return Ty::new_error(self.tcx, guar);
             }
         };
+        let adt_ty = if self.tcx.exact_constructor_type(adt_ty).is_some()
+            || !self.tcx.enum_preserves_exact_variants(self.tcx.parent(variant.def_id))
+        {
+            adt_ty
+        } else {
+            self.tcx.exact_variant_ty(adt_ty, variant.def_id)
+        };
 
         // Prohibit struct expressions when non-exhaustive flag is set.
-        let adt = adt_ty.ty_adt_def().expect("`check_struct_path` returned non-ADT type");
+        let family_ty = self.tcx.exact_constructor_type(adt_ty).map_or(adt_ty, |exact| exact.base);
+        let adt = family_ty.ty_adt_def().expect("`check_struct_path` returned non-ADT family type");
         if variant.field_list_has_applicable_non_exhaustive() {
             self.dcx()
                 .emit_err(StructExprNonExhaustive { span: expr.span, what: adt.variant_descr() });
@@ -1867,6 +1875,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         let tcx = self.tcx;
 
         let adt_ty = self.resolve_vars_with_obligations(adt_ty);
+        let family_ty = self.tcx.exact_constructor_type(adt_ty).map_or(adt_ty, |exact| exact.base);
         let adt_ty_hint = expected.only_has_type(self).and_then(|expected| {
             self.fudge_inference_if_ok(|| {
                 let ocx = ObligationCtxt::new(self);
@@ -1883,8 +1892,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             self.demand_eqtype(path_span, adt_ty_hint, adt_ty);
         }
 
-        let ty::Adt(adt, args) = adt_ty.kind() else {
-            span_bug!(path_span, "non-ADT passed to check_expr_struct_fields");
+        let ty::Adt(adt, args) = family_ty.kind() else {
+            span_bug!(path_span, "non-ADT family type passed to check_expr_struct_fields");
         };
         let adt_kind = adt.adt_kind();
 
@@ -1932,7 +1941,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     })
                 } else {
                     self.report_unknown_field(
-                        adt_ty,
+                        family_ty,
                         variant,
                         expr,
                         field,
@@ -2063,7 +2072,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         .emit();
                     return;
                 }
-                let fru_tys = match adt_ty.kind() {
+                let fru_tys = match family_ty.kind() {
                     ty::Adt(adt, args) if adt.is_struct() => variant
                         .fields
                         .iter()
@@ -2171,7 +2180,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 } else {
                     self.check_expr_has_type_or_error(base_expr, adt_ty, |_| {
                         let base_ty = self.typeck_results.borrow().expr_ty(base_expr);
-                        let same_adt = matches!((adt_ty.kind(), base_ty.kind()),
+                        let base_family_ty = self
+                            .tcx
+                            .exact_constructor_type(base_ty)
+                            .map_or(base_ty, |exact| exact.base);
+                        let same_adt = matches!((family_ty.kind(), base_family_ty.kind()),
                             (ty::Adt(adt, _), ty::Adt(base_adt, _)) if adt == base_adt);
                         if self.tcx.sess.is_nightly_build() && same_adt {
                             feature_err(
@@ -2183,7 +2196,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             .emit();
                         }
                     });
-                    match adt_ty.kind() {
+                    match family_ty.kind() {
                         ty::Adt(adt, args) if adt.is_struct() => variant
                             .fields
                             .iter()
@@ -2453,7 +2466,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .partition(|field| field.2);
         err.span_labels(used_private_fields.iter().map(|(_, span, _)| *span), "private field");
 
-        if let ty::Adt(def, _) = adt_ty.kind() {
+        let family_ty = self.tcx.exact_constructor_type(adt_ty).map_or(adt_ty, |exact| exact.base);
+        if let ty::Adt(def, _) = family_ty.kind() {
             if (def.did().is_local() || !used_fields.is_empty())
                 && !remaining_private_fields.is_empty()
             {
@@ -2768,6 +2782,34 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         while let Some((deref_base_ty, _)) = autoderef.next() {
             debug!("deref_base_ty: {:?}", deref_base_ty);
             match deref_base_ty.kind() {
+                ty::Refined(refined_base, refinement)
+                    if let ty::RefinementTypeInvariant::ExactConstructor(variant_def_id) =
+                        self.tcx.refinement_type_invariant(*refinement)
+                        && let ty::Adt(base_def, args) = *refined_base.kind()
+                        && base_def.is_enum() =>
+                {
+                    let variant = base_def.variant(base_def.variant_index_with_id(variant_def_id));
+                    let (ident, def_scope) = self.tcx.adjust_ident_and_get_scope(
+                        field,
+                        base_def.did(),
+                        self.body_def_id,
+                    );
+                    if let Some((index, field)) =
+                        variant.fields.iter_enumerated().find(|(_, candidate)| {
+                            candidate.ident(self.tcx).normalize_to_macros_2_0() == ident
+                        })
+                    {
+                        self.write_field_index(expr.hir_id, index);
+                        let adjustments = self.adjust_steps(&autoderef);
+                        if field.vis.is_accessible_from(def_scope, self.tcx) {
+                            self.apply_adjustments(base, adjustments);
+                            self.register_predicates(autoderef.into_obligations());
+                            self.tcx.check_stability(field.did, Some(expr.hir_id), expr.span, None);
+                            return self.field_ty(expr.span, field, args);
+                        }
+                        private_candidate = Some((adjustments, base_def.did()));
+                    }
+                }
                 ty::Adt(base_def, args) if !base_def.is_enum() => {
                     debug!("struct named {:?}", deref_base_ty);
                     // we don't care to report errors for a struct if the struct itself is tainted

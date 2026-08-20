@@ -968,7 +968,7 @@ impl TyCoercionStability {
                 | ty::Int(_)
                 | ty::Uint(_)
                 | ty::Array(..)
-                | ty::Pat(..)
+                | ty::Refined(..)
                 | ty::Float(_)
                 | ty::RawPtr(..)
                 | ty::FnPtr(..)

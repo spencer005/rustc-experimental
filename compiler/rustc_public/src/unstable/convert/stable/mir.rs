@@ -367,6 +367,8 @@ impl<'tcx> Stable<'tcx> for mir::CastKind {
             Transmute => crate::mir::CastKind::Transmute,
             BoxDerefTransmute => crate::mir::CastKind::BoxDerefTransmute,
             Subtype => crate::mir::CastKind::Subtype,
+            RefinementConstruct => crate::mir::CastKind::RefinementConstruct,
+            RefinementForget => crate::mir::CastKind::RefinementForget,
         }
     }
 }

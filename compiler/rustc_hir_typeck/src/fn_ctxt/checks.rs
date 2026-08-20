@@ -1004,7 +1004,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     ty::Char => Some(tcx.types.u8),
                     ty::RawPtr(..) => Some(tcx.types.usize),
                     ty::FnDef(..) | ty::FnPtr(..) => Some(tcx.types.usize),
-                    &ty::Pat(base, _) if base.is_integral() => {
+                    &ty::Refined(base, _) if base.is_integral() => {
                         let layout = tcx
                             .layout_of(self.typing_env(self.param_env).as_query_input(ty))
                             .ok()?;
@@ -1046,6 +1046,10 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ) -> Result<(&'tcx ty::VariantDef, Ty<'tcx>), ErrorGuaranteed> {
         let path_span = qpath.span();
         let (def, ty) = self.finish_resolving_struct_path(qpath, path_span, hir_id);
+        let normalized_adt_ty = self
+            .tcx
+            .exact_constructor_type(ty.normalized)
+            .map_or(ty.normalized, |exact| exact.base);
         let variant = match def {
             Res::Err => {
                 let guar =
@@ -1053,17 +1057,17 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 self.set_tainted_by_errors(guar);
                 return Err(guar);
             }
-            Res::Def(DefKind::Variant, _) => match ty.normalized.ty_adt_def() {
+            Res::Def(DefKind::Variant, _) => match normalized_adt_ty.ty_adt_def() {
                 Some(adt) => {
-                    Some((adt.variant_of_res(def), adt.did(), Self::user_args_for_adt(ty)))
+                    Some((adt.variant_of_res(def), adt.did(), self.user_args_for_adt(ty)))
                 }
                 _ => bug!("unexpected type: {:?}", ty.normalized),
             },
             Res::Def(DefKind::Struct | DefKind::Union | DefKind::TyAlias | DefKind::AssocTy, _)
             | Res::SelfTyParam { .. }
-            | Res::SelfTyAlias { .. } => match ty.normalized.ty_adt_def() {
+            | Res::SelfTyAlias { .. } => match normalized_adt_ty.ty_adt_def() {
                 Some(adt) if !adt.is_enum() => {
-                    Some((adt.non_enum_variant(), adt.did(), Self::user_args_for_adt(ty)))
+                    Some((adt.non_enum_variant(), adt.did(), self.user_args_for_adt(ty)))
                 }
                 _ => None,
             },

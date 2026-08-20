@@ -417,6 +417,24 @@ rustc_queries! {
         feedable
     }
 
+    /// Returns the canonical family/local binder partition for a refined constructor scheme.
+
+    query variant_binder_scheme(key: DefId) -> &'tcx ty::VariantBinderScheme {
+        desc { "computing constructor binders of `{}`", tcx.def_path_str(key) }
+        arena_cache
+        cache_on_disk
+        separate_provide_extern
+    }
+
+    /// Returns the canonical semantic constructor scheme for an enum variant.
+    query variant_scheme(key: DefId) -> &'tcx ty::VariantScheme<'tcx> {
+        desc { "computing constructor scheme of `{}`", tcx.def_path_str(key) }
+        arena_cache
+        cache_on_disk
+        separate_provide_extern
+    }
+
+
     /// Returns the (elaborated) *clauses* of the definition given by `DefId`
     /// that must be proven true at usage sites (and which can be assumed at definition site).
     ///

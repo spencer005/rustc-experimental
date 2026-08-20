@@ -1498,13 +1498,18 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         Ok(())
     }
 
+    fn constructor_pattern_ty(&self, value_ty: Ty<'tcx>) -> Ty<'tcx> {
+        self.tcx.exact_constructor_type(value_ty).map_or(value_ty, |exact| exact.base)
+    }
+
     fn resolve_pat_struct(
         &self,
         pat: &'tcx Pat<'tcx>,
         qpath: &hir::QPath<'tcx>,
     ) -> Result<ResolvedPat<'tcx>, ErrorGuaranteed> {
         // Resolve the path and check the definition for errors.
-        let (variant, pat_ty) = self.check_struct_path(qpath, pat.hir_id)?;
+        let (variant, value_ty) = self.check_struct_path(qpath, pat.hir_id)?;
+        let pat_ty = self.constructor_pattern_ty(value_ty);
         Ok(ResolvedPat { ty: pat_ty, kind: ResolvedPatKind::Struct { variant } })
     }
 
@@ -1628,6 +1633,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // Find the type of the path pattern, for later checking.
         let (pat_ty, pat_res) =
             self.instantiate_value_path(segments, opt_ty, res, span, span, path_id);
+        let pat_ty = if matches!(res, Res::Def(DefKind::Ctor(_, CtorKind::Const), _)) {
+            self.constructor_pattern_ty(pat_ty)
+        } else {
+            pat_ty
+        };
         Ok(ResolvedPat { ty: pat_ty, kind: ResolvedPatKind::Path { res, pat_res, segments } })
     }
 
@@ -1809,6 +1819,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // Replace constructor type with constructed type for tuple struct patterns.
         let pat_ty = pat_ty.fn_sig(tcx).output();
         let pat_ty = pat_ty.no_bound_vars().expect("expected fn type");
+        let pat_ty = self.constructor_pattern_ty(pat_ty);
 
         Ok(ResolvedPat { ty: pat_ty, kind: ResolvedPatKind::TupleStruct { res, variant } })
     }

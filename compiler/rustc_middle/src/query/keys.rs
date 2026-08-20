@@ -406,7 +406,7 @@ fn def_id_of_type_cached<'a>(ty: Ty<'a>, visited: &mut SsoHashSet<Ty<'a>>) -> Op
 
         ty::Dynamic(data, ..) => data.principal_def_id(),
 
-        ty::Pat(subty, _) | ty::Array(subty, _) | ty::Slice(subty) => {
+        ty::Refined(subty, _) | ty::Array(subty, _) | ty::Slice(subty) => {
             def_id_of_type_cached(subty, visited)
         }
 

@@ -41,6 +41,7 @@ impl AttributeKind {
             DocComment { .. } => Yes,
             EiiDeclaration(_) => Yes,
             EiiImpl(..) => No,
+            ExactVariants(..) => Yes,
             ExportName { .. } => Yes,
             ExportStable => No,
             Feature(..) => No,

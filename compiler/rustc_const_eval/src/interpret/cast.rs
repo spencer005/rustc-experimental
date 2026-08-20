@@ -38,6 +38,8 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
             cast_kind,
             CastKind::Transmute
                 | CastKind::Subtype
+                | CastKind::RefinementConstruct
+                | CastKind::RefinementForget
                 | CastKind::BoxDerefTransmute
                 | CastKind::PointerCoercion(PointerCoercion::Unsize, _)
         ) && M::enforce_validity(self, src.layout)
@@ -189,7 +191,12 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 }
             }
 
-            CastKind::Transmute | CastKind::Subtype | CastKind::BoxDerefTransmute => {
+            CastKind::Transmute
+            | CastKind::Subtype
+            | CastKind::RefinementConstruct
+
+            | CastKind::RefinementForget
+            | CastKind::BoxDerefTransmute => {
                 assert!(src.layout.is_sized());
                 assert!(dest.layout.is_sized());
                 assert_eq!(cast_ty, dest.layout.ty); // we otherwise ignore `cast_ty` enirely...
@@ -535,7 +542,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     ) -> InterpResult<'tcx> {
         trace!("Unsizing {:?} of type {} into {}", *src, src.layout.ty, cast_ty.ty);
         match (src.layout.ty.kind(), cast_ty.ty.kind()) {
-            (&ty::Pat(_, s_pat), &ty::Pat(cast_ty, c_pat)) if s_pat == c_pat => {
+            (&ty::Refined(_, s_pat), &ty::Refined(cast_ty, c_pat)) if s_pat == c_pat => {
                 let src = self.project_field(src, FieldIdx::ZERO)?;
                 let dest = self.project_field(dest, FieldIdx::ZERO)?;
                 let cast_ty = self.layout_of(cast_ty)?;

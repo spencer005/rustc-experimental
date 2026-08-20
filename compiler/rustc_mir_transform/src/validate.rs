@@ -1,6 +1,6 @@
 //! Validates the MIR to ensure that invariants are upheld.
 
-use rustc_abi::{ExternAbi, FIRST_VARIANT, Size};
+use rustc_abi::{ExternAbi, FIRST_VARIANT, FieldIdx, Size};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::attrs::InlineAttr;
 use rustc_hir::attrs::lang_items::LangItem;
@@ -693,8 +693,29 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                         };
                         check_equal(self, location, *f_ty);
                     }
-                    // Debug info is allowed to project into pattern types
-                    ty::Pat(base, _) => check_equal(self, location, *base),
+                    ty::Refined(base, refinement) => {
+                        match self.tcx.refinement_type_invariant(*refinement) {
+                            ty::RefinementTypeInvariant::ScalarPattern(_) => {
+                                // Debug info is allowed to project into scalar pattern types.
+                                check_equal(self, location, *base);
+                            }
+                            ty::RefinementTypeInvariant::ExactConstructor(_) => {
+                                let Some(variant) = parent_ty.variant_index else {
+                                    self.fail(
+                                        location,
+                                        format!(
+                                            "field projection on exact constructor type {parent_ty:?} was not downcast"
+                                        ),
+                                    );
+                                    return;
+                                };
+                                let field_ty =
+                                    PlaceTy::field_ty(self.tcx, parent_ty.ty, Some(variant), f)
+                                        .skip_norm_wip();
+                                check_equal(self, location, field_ty);
+                            }
+                        }
+                    }
                     ty::Adt(adt_def, args) => {
                         // see <https://github.com/rust-lang/rust/blob/7601adcc764d42c9f2984082b49948af652df986/compiler/rustc_middle/src/ty/layout.rs#L861-L864>
                         if self.tcx.is_lang_item(adt_def.did(), LangItem::DynMetadata) {
@@ -717,11 +738,24 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                         }
 
                         let var = parent_ty.variant_index.unwrap_or(FIRST_VARIANT);
-                        let Some(field) = adt_def.variant(var).fields.get(f) else {
+                        let variant = adt_def.variant(var);
+                        if variant.fields.get(f).is_none() {
                             fail_out_of_bounds(self, location);
                             return;
+                        }
+                        let field_ty = match variant.field_ty(self.tcx, f, args) {
+                            Ok(field_ty) => field_ty.skip_norm_wip(),
+                            Err(err) => {
+                                self.fail(
+                                    location,
+                                    format!(
+                                        "cannot recover field {f:?} of variant {var:?} for {parent_ty:?}: {err:?}"
+                                    ),
+                                );
+                                return;
+                            }
                         };
-                        check_equal(self, location, field.ty(self.tcx, args).skip_norm_wip());
+                        check_equal(self, location, field_ty);
                     }
                     ty::Closure(_, args) => {
                         let args = args.as_closure();
@@ -1052,10 +1086,22 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                             variant.fields.len(),
                         ));
                     }
-                    for (src, dest) in std::iter::zip(fields, &variant.fields) {
-                        let dest_ty = self
-                            .tcx
-                            .normalize_erasing_regions(self.typing_env, dest.ty(self.tcx, args));
+                    for (field_index, src) in fields.iter().enumerate() {
+                        let field_index = FieldIdx::from_usize(field_index);
+                        let dest_ty = match variant.field_ty(self.tcx, field_index, args) {
+                            Ok(dest_ty) => {
+                                self.tcx.normalize_erasing_regions(self.typing_env, dest_ty)
+                            }
+                            Err(err) => {
+                                self.fail(
+                                    location,
+                                    format!(
+                                        "cannot recover field {field_index:?} of variant {idx:?} for {def_id:?}: {err:?}"
+                                    ),
+                                );
+                                continue;
+                            }
+                        };
                         if !self.mir_assign_valid_types(src.ty(self.body, self.tcx), dest_ty) {
                             self.fail(location, "adt field has the wrong type");
                         }
@@ -1423,6 +1469,46 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                                     location,
                                     format!(
                                         "Cannot BoxDerefTransmute to non-pointer type {target_type}"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    CastKind::RefinementConstruct => {
+                        if self.tcx.refinement_construction_variant(op_ty, *target_type).is_none() {
+                            self.fail(
+                                location,
+                                format!(
+                                    "invalid exact-constructor refinement construction cast: {op_ty} -> {target_type}"
+                                ),
+                            );
+                        }
+                    }
+                    CastKind::RefinementForget => {
+                        match self.tcx.refinement_conversion(op_ty, *target_type) {
+                            Some(ty::RefinementConversion::ForgetExactConstructor) => {}
+                            Some(ty::RefinementConversion::ForgetSharedExactConstructor {
+                                relation_source,
+                            }) => {
+                                if !util::sub_types(
+                                    self.tcx,
+                                    self.typing_env,
+                                    relation_source,
+                                    *target_type,
+                                ) {
+                                    self.fail(
+                                        location,
+                                        format!(
+                                            "invalid shared exact-constructor refinement forgetting cast: {op_ty} -> {target_type}"
+                                        ),
+                                    );
+                                }
+                            }
+                            Some(ty::RefinementConversion::Identity) | None => {
+                                self.fail(
+                                    location,
+                                    format!(
+                                        "invalid exact-constructor refinement forgetting cast: {op_ty} -> {target_type}"
                                     ),
                                 );
                             }

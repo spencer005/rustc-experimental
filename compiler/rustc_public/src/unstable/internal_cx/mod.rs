@@ -59,6 +59,16 @@ impl<'tcx> InternalCx<'tcx> for TyCtxt<'tcx> {
     fn mk_pat(self, v: ty::PatternKind<'tcx>) -> ty::Pattern<'tcx> {
         TyCtxt::mk_pat(self, v)
     }
+    fn refinement_for_pattern(self, pattern: ty::Pattern<'tcx>) -> ty::RefinementTypeKey<'tcx> {
+        TyCtxt::refinement_for_pattern(self, pattern)
+    }
+
+    fn refinement_for_constructor(
+        self,
+        variant_def_id: rustc_hir::def_id::DefId,
+    ) -> ty::RefinementTypeKey<'tcx> {
+        TyCtxt::refinement_for_constructor(self, variant_def_id)
+    }
 
     fn mk_poly_existential_predicates(
         self,

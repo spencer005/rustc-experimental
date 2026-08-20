@@ -682,9 +682,16 @@ impl FromClean<clean::Type> for Type {
             Array(t, s) => {
                 Type::Array { type_: Box::new(t.into_json(renderer)), len: s.to_string() }
             }
-            clean::Type::Pat(t, p) => Type::Pat {
+            clean::Type::Refined(t, refinement) => Type::Refined {
                 type_: Box::new(t.into_json(renderer)),
-                __pat_unstable_do_not_use: p.to_string(),
+                refinement: match refinement {
+                    clean::TypeRefinement::Pattern(pattern) => {
+                        TypeRefinement::Pattern(pattern.to_string())
+                    }
+                    clean::TypeRefinement::Constructor(variant) => {
+                        TypeRefinement::Constructor(variant.to_string())
+                    }
+                },
             },
             // FIXME(FRTs): implement
             clean::Type::FieldOf(..) => unimplemented!(),

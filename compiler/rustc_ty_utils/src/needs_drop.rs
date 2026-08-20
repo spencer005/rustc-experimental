@@ -304,7 +304,7 @@ where
                     | ty::Ref(..)
                     | ty::RawPtr(..)
                     | ty::FnDef(..)
-                    | ty::Pat(..)
+                    | ty::Refined(..)
                     | ty::FnPtr(..)
                     | ty::Tuple(_)
                     | ty::Bound(..)

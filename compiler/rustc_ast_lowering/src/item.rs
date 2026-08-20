@@ -798,10 +798,39 @@ impl<'hir> LoweringContext<'_, 'hir> {
         }
         let hir_id = self.lower_node_id(v.id);
         self.lower_attrs(hir_id, &v.attrs, v.span, Target::Variant);
+        let (data, scheme) = match &v.scheme {
+            ast::VariantSchemeSyntax::Ordinary => {
+                let data = self.lower_variant_data(hir_id, item_kind, &v.data);
+                (data, hir::VariantSchemeSyntax::Ordinary)
+            }
+
+
+            ast::VariantSchemeSyntax::Refined { generics, result } => {
+                let (generics, (data, result)) = self.lower_generics(
+                    generics,
+                    ImplTraitContext::Disallowed(ImplTraitPosition::Generic),
+                    |this| {
+                        let data = this.lower_variant_data(hir_id, item_kind, &v.data);
+                        let result = match result {
+                            ast::VariantResult::Default => hir::VariantResult::Default,
+                            ast::VariantResult::Explicit(ty) => hir::VariantResult::Explicit(
+                                this.lower_ty_alloc(
+                                    ty,
+                                    ImplTraitContext::Disallowed(ImplTraitPosition::VariantResult),
+                                ),
+                            ),
+                        };
+                        (data, result)
+                    },
+                );
+                (data, hir::VariantSchemeSyntax::Refined { generics, result })
+            }
+        };
         hir::Variant {
             hir_id,
             def_id: self.local_def_id(v.id),
-            data: self.lower_variant_data(hir_id, item_kind, &v.data),
+            data,
+            scheme,
             disr_expr: v
                 .disr_expr
                 .as_ref()

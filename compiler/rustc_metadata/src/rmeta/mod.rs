@@ -431,6 +431,9 @@ define_tables! {
     lookup_deprecation_entry: Table<DefIndex, LazyValue<attrs::Deprecation>>,
     explicit_clauses_of: Table<DefIndex, LazyValue<ty::GenericClauses<'static>>>,
     generics_of: Table<DefIndex, LazyValue<ty::Generics>>,
+    variant_binder_scheme: Table<DefIndex, LazyValue<ty::VariantBinderScheme>>,
+    variant_scheme: Table<DefIndex, LazyValue<ty::VariantScheme<'static>>>,
+
     type_of: Table<DefIndex, LazyValue<ty::EarlyBinder<'static, Ty<'static>>>>,
     variances_of: Table<DefIndex, LazyArray<ty::Variance>>,
     fn_sig: Table<DefIndex, LazyValue<ty::EarlyBinder<'static, ty::PolyFnSig<'static>>>>,

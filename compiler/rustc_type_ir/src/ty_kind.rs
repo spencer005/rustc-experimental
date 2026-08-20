@@ -179,14 +179,11 @@ pub enum TyKind<I: Interner> {
     /// An array with the given length. Written as `[T; N]`.
     Array(I::Ty, I::Const),
 
-    /// A pattern newtype.
+    /// A refinement of a base type with an opaque canonical refinement identity.
     ///
-    /// Takes any type and restricts its valid values to its pattern.
-    /// This will also change the layout to take advantage of this restriction.
-    /// Only `Copy` and `Clone` will automatically get implemented for pattern types.
-    /// Auto-traits treat this as if it were an aggregate with a single nested type.
-    /// Only supports integer range patterns for now.
-    Pat(I::Ty, I::Pat),
+    /// Semantic and representation policy for the refinement is owned by the interner's
+    /// refinement capability queries rather than by direct consumers of this type node.
+    Refined(I::Ty, I::RefinementTypeKey),
 
     /// The pointee of an array slice. Written as `[T]`.
     Slice(I::Ty),
@@ -388,7 +385,7 @@ impl<I: Interner> TyKind<I> {
             | ty::Foreign(_)
             | ty::Str
             | ty::Array(_, _)
-            | ty::Pat(_, _)
+            | ty::Refined(_, _)
             | ty::Slice(_)
             | ty::RawPtr(_, _)
             | ty::Ref(_, _, _)
@@ -440,7 +437,7 @@ impl<I: Interner> fmt::Debug for TyKind<I> {
             Foreign(d) => f.debug_tuple("Foreign").field(d).finish(),
             Str => write!(f, "str"),
             Array(t, c) => write!(f, "[{t:?}; {c:?}]"),
-            Pat(t, p) => write!(f, "pattern_type!({t:?} is {p:?})"),
+            Refined(t, refinement) => write!(f, "Refined({t:?}, {refinement:?})"),
             Slice(t) => write!(f, "[{:?}]", &t),
             RawPtr(ty, mutbl) => write!(f, "*{} {:?}", mutbl.ptr_str(), ty),
             Ref(r, t, m) => write!(f, "&{:?} {}{:?}", r, m.prefix_str(), t),

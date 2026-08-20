@@ -1497,7 +1497,8 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                         | RibKind::FnOrCoroutine
                         | RibKind::Module(..)
                         | RibKind::MacroDefinition(..)
-                        | RibKind::ForwardGenericParamBan(_) => {
+                        | RibKind::ForwardGenericParamBan(_)
+                        | RibKind::VariantGenerics => {
                             // Nothing to do. Continue.
                         }
                         RibKind::Item(..) | RibKind::AssocItem => {
@@ -1590,6 +1591,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                         | RibKind::MacroDefinition(..)
                         | RibKind::InlineAsmSym
                         | RibKind::AssocItem
+                        | RibKind::VariantGenerics
                         | RibKind::ForwardGenericParamBan(_) => {
                             // Nothing to do. Continue.
                             continue;
@@ -1687,6 +1689,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                         | RibKind::MacroDefinition(..)
                         | RibKind::InlineAsmSym
                         | RibKind::AssocItem
+                        | RibKind::VariantGenerics
                         | RibKind::ForwardGenericParamBan(_) => continue,
 
                         RibKind::ConstParamTy => {

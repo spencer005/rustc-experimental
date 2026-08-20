@@ -132,7 +132,9 @@ impl<'tcx> crate::MirPass<'tcx> for ElaborateBoxDerefs {
                         ]);
                         // While we can't project into a pattern type in a basic block,
                         // this is debug info where it's fine.
-                        let pat_ty = Ty::new_pat(tcx, ptr_ty, tcx.mk_pat(PatternKind::NotNull));
+                        let pattern = tcx.mk_pat(PatternKind::NotNull);
+                        let pat_ty =
+                            Ty::new_refined(tcx, ptr_ty, tcx.refinement_for_pattern(pattern));
                         new_projections.push(PlaceElem::Field(FieldIdx::ZERO, pat_ty));
                         new_projections.push(PlaceElem::Field(FieldIdx::ZERO, ptr_ty));
                         new_projections.push(PlaceElem::Deref);
